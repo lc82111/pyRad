@@ -27,9 +27,9 @@ from loss import Loss
 #  from sp import sp_solvers
 from options import BaseOptions
 from generate_trainingset import PencilBeam
-from pbDose2mcDose.net.Unet3D import UNet3D 
-from pbDose2mcDose.data.datamodule import Transform 
-from pbDose2mcDose.utils import MyModelCheckpoint
+from neuralDose.net.Unet3D import UNet3D 
+from neuralDose.data.datamodule import Transform 
+from neuralDose.utils import MyModelCheckpoint
 
 
 def _smallest_contiguous_sum_2d(grad_map):
@@ -116,19 +116,17 @@ class NerualDose():
         '''Arguments:
             MUs: tensor (#apertures,)
             segs: tensor (hxw, #apertures)
-            mask: ndarray valid ray bool matrix (h,w)
+            mask: tensor bool (h,w) 
         '''
         # set up beam params
-        H, W = mask.shape
-        mask = torch.tensor(mask, dtype=torch.bool, device=self.hparam.device)
         ray_begin, ray_num = self.data.dict_beamID_ValidRayBeginNum[beam_id]
+        segs = segs.view(mask.shape[0], mask.shape[1], -1)
         MUs = torch.abs(MUs)  # nonnegative constraint 
        
         # neural dose
         neuralDose = 0
         for j in range(segs.shape[-1]): # for each aperture
             # set up a all-beam-segment-tmp-vector with all ones for current aperture, and all zeros for another apertures
-            segs = segs.view(H, W, -1)
             tmp = torch.zeros((self.deposition.shape[1], ), dtype=torch.float32, device=self.hparam.device)
             tmp[ray_begin:ray_begin+ray_num] = segs[:,:,j][mask].flatten()
             unitNeuralDose = self.get_neuralDose_for_an_aperture(tmp, beam_id) # 3D unit dose (D,H,W)
@@ -142,7 +140,7 @@ class NerualDose():
         pbUnitDose = pbUnitDose[0:self.data.get_pointNum_from_organName('ITV_skin')]  # only care the dose of skin
         pbUnitDose = self.PB._parse_dose_torch(pbUnitDose)  # 3D dose 61x256x256
         pbUnitDose = transforms.CenterCrop(size=(128,128))(pbUnitDose) # (D=61, H=256, W=256) -> (D=61, H=128, W=128)
-       
+
         # net inputs
         mcdose_opened = self.pbmcDoses_opened[beam_id-1] # get whole-opened mcdose for the current gantry angle
         inputs = torch.stack([self.CTs, mcdose_opened, pbUnitDose], dim=0)
@@ -150,11 +148,11 @@ class NerualDose():
         inputs = inputs.unsqueeze(0)
 
         # forward throught net 
-        with torch.no_grad():
-            unitNerualDose = self.net(inputs)
-        unitNerualDose = torch.relu(unitNerualDose.squeeze())
-        unitNerualDose = self.transform.strip_padding_depths(unitNerualDose)
-        return unitNerualDose 
+        #with torch.no_grad():
+        unitNeuralDose = self.net(inputs)
+        unitNeuralDose = torch.relu(unitNeuralDose.squeeze())
+        unitNeuralDose = self.transform.strip_padding_depths(unitNeuralDose)
+        return unitNeuralDose 
 
     def load_net(self):
         net = UNet3D(in_channels=3, n_classes=1, norm_type=self.hparam.norm_type)
@@ -167,9 +165,10 @@ class NerualDose():
         print(missing_keys)
         cprint('unexpected_keys', 'green')
         print(unexpected_keys)
-        
+
         net.eval()
         for k, v in net.named_parameters(): v.requires_grad_(False)  # try to save memory
+        if self.hparam.device == 'cuda': net.to(self.hparam.device)
         return net
 
 class MasterProblem():
@@ -181,6 +180,13 @@ class MasterProblem():
         # recode all segments and left/right leaf positions 
         self.dict_segments = OrderedBunch()
         self.dict_lrs      = OrderedBunch()
+    
+    def init_segments(self):
+        '''Return:  dict_gradMaps     {beam_id: matrix}
+                    new_dict_segments {beam_id: vector}'''
+        dict_gradMaps = self.optim.init_gradMaps() # get grad w.r.t segments
+        new_dict_segments, new_dict_lrs = self.sp.solve(dict_gradMaps) # new_dict_segments {beam_id: vector} # get next segments
+        return dict_gradMaps, new_dict_segments, new_dict_lrs
 
     def update_segments_lrs(self, new_dict_segments, new_dict_lrs):
         ''' append the new segment vector to the column of old seg matrix
@@ -250,7 +256,7 @@ class Optimization():
         torch.random.manual_seed(0)
         np.set_printoptions(precision=4, sign=' ')
 
-    def init_segments(self):
+    def init_gradMaps(self):
         '''Return:  dict_gradMaps     {beam_id: matrix}
                     new_dict_segments {beam_id: vector}'''
         if self.hparam.optimization_continue:  # continue last optimization
@@ -260,28 +266,23 @@ class Optimization():
             neuralDose = 0 # (D,H,W) 
             dict_segments = OrderedBunch()
             for beam_id, mask in self.data.dict_rayBoolMat.items(): # for each beam
-                H, W = mask.shape
-                dict_segments[beam_id] = torch.zeros((H*W, 1), dtype=torch.float32, device=self.hparam.device, requires_grad=True)  # (#hxw, 1)
+                mask = torch.tensor(mask, dtype=torch.bool, device=self.hparam.device)
+                dict_segments[beam_id] = torch.zeros((mask.shape[0]*mask.shape[1], 1), dtype=torch.float32, device=self.hparam.device, requires_grad=True)  # (#hxw, 1)
                 MUs  = torch.ones((1,1), dtype=torch.float32, device=self.hparam.device, requires_grad=True) # (1,)
                 neuralDose += self.neuralDose.get_neuralDose_for_a_beam(beam_id, MUs, dict_segments[beam_id], mask)
-
-        pdb.set_trace()
+        
+        # loss
         dict_organ_doses = parse_MonteCarlo_dose(neuralDose, self.data)
         loss, breaking_points_nums = self.loss.loss_func(dict_organ_doses)
-
         print(f'breaking points #: ', end='')
         for organ_name, breaking_points_num in breaking_points_nums.items(): print(f'{organ_name}: {breaking_points_num}   ', end='')
         print(f'loss={to_np(loss)}\n\n')
 
+        # get grad
         loss.backward(retain_graph=False) # backward to get grad
-        grads = segs.grad.detach().cpu().numpy() # (#bixels,)
+        dict_gradMaps = get_segment_grad(dict_segments, self.data.dict_rayBoolMat)
 
-        # project 1D grad vector (#vaild_bixels,) to 2D fluence maps {beam_id: matrix}
-        dict_gradMaps = self.data.project_to_fluenceMaps(grads)  # {beam_id: matrix}
-
-        new_dict_segments, new_dict_lrs = self.sp.solve(dict_gradMaps) # new_dict_segments {beam_id: vector}
-
-        return dict_gradMaps, new_dict_segments, new_dict_lrs
+        return dict_gradMaps
 
     def _get_optimizer(self, opt_var, lr, steps, optimizer_name, scheduler_name):
         '''ref: https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate'''
@@ -452,7 +453,7 @@ class Optimization():
         for i in range(steps):
             # forward
             self.global_step += 1
-            loss = self.forward(self.deposition, dict_segments, dict_partialExp, dict_lrs, dict_MUs) # (#vaild_bixels,)
+            loss = self.forward(dict_segments, dict_partialExp, dict_lrs, dict_MUs) # (#vaild_bixels,)
 
             # backward
             optimizer.zero_grad()
@@ -482,20 +483,15 @@ class Optimization():
     
     def _save_best_state(self, loss, dict_MUs, dict_segments, dict_lrs, dict_partialExp):
         self.best_loss = loss
-        pdb.set_trace()
-        self.best_dict_gradMap, self.best_dict_MUs, self.best_dict_segments, self.best_dict_lrs, self.best_dict_partialExp = [OrderedBunch(),] * 5
+        self.best_dict_MUs, self.best_dict_segments, self.best_dict_lrs, self.best_dict_partialExp = [OrderedBunch(),] * 4
         for beam_id, lrs in dict_lrs.items():  # for each beam
             self.best_dict_MUs[beam_id]        = to_np(dict_MUs[beam_id])
             self.best_dict_segments[beam_id]   = to_np(dict_segments[beam_id])
             self.best_dict_partialExp[beam_id] = to_np(dict_partialExp[beam_id])
             self.best_dict_lrs[beam_id]        = lrs
 
-            # grad of fluence or segment
-            grad = dict_segments[beam_id].detach().cpu().numpy()  # (h*w, #aperture)
-            grad = grad.sum(axis=-1)  # (h*w)
-            mask = self.data.dict_rayBoolMat[beam_id]
-            H, W = mask.shape
-            self.best_dict_gradMap[beam_id] = grad.reshape(H, W, -1) * mask
+        # grad of fluence or segment
+        self.best_dict_gradMap = get_segment_grad(dict_segments, self.data.dict_rayBoolMat)
 
     def _modulate_segment_with_partialExposure(self, segs, pes, lrs, rayMat):
         '''
@@ -537,25 +533,21 @@ class Optimization():
             neuralDose: tensor (D,H,W)
             dict_fluenceMaps: {beam_id, (h,w)}
         '''
-        pdb.set_trace()
-        neuralDose, dict_fluences = 0, OrderedBunch()
+        neuralDose, dict_fluenceMaps = 0, OrderedBunch()
         #  for beam_id in range(1, len(dict_segments)+1):
         for beam_id, mask in self.data.dict_rayBoolMat.items(): # for each beam
+            mask = torch.tensor(mask, dtype=torch.bool, device=self.hparam.device)
             # modulate segment with partial exposure
             pe = torch.sigmoid(dict_partialExp[beam_id])  # [0,1] constraint
             segs = self._modulate_segment_with_partialExposure(dict_segments[beam_id], pe, dict_lrs[beam_id], self.data.dict_rayBoolMat[beam_id])
             MUs = dict_MUs[beam_id]
-            
-            neuralDose = self.neuralDose.get_neuralDose_for_a_beam(beam_id, MUs, segs, mask)
-
-            with torch.no_grad():
-                dict_fluences[beam_id] = torch.matmul(segs, MU)  # {beam_id: vector}
-
-        with torch.no_grad():
-            _, dict_fluenceMaps[beam_id] = self.data.project_to_validRays_torch(dict_fluences)  # (#valid_bixels,), {beam_id: matrix}
+            neuralDose += self.neuralDose.get_neuralDose_for_a_beam(beam_id, MUs, segs, mask)
+            with torch.no_grad(): # for visualization
+                fluence = torch.matmul(segs, MUs)  # {beam_id: vector}
+                dict_fluenceMaps[beam_id] = fluence.view(*mask.shape) * mask # select valid rays
         return neuralDose, dict_fluenceMaps
 
-    def forward(self, deposition, dict_segments, dict_partialExp, dict_lrs, dict_MUs):
+    def forward(self, dict_segments, dict_partialExp, dict_lrs, dict_MUs):
         ''' 0. compute fluence from seg, mu, and pe
             1. compute dose from deposition and fluence.
             2. compute loss from dose
@@ -571,7 +563,6 @@ class Optimization():
 
     def loss_func(self, doses, dict_segments, dict_MUs):
         # split doses to obtain individual organ doses
-        pdb.set_trace()
         dict_organ_doses = parse_MonteCarlo_dose(doses, self.data)
 
         # cal loss
@@ -657,7 +648,7 @@ def main(hparam):
 
     # master and sp loop 
     nb_apertures = 0
-    dict_gradMaps, next_dict_segments, next_dict_lrs = mp.optim.init_segments()
+    dict_gradMaps, next_dict_segments, next_dict_lrs = mp.init_segments()
     while multiply_dict(dict_gradMaps, next_dict_segments)<0 and nb_apertures<hparam.nb_apertures:  # next_seg * cur_grad < 0 means open next_seg (intensity of bixels - negative grad == increase the intensity) will decrease the loss 
         dict_gradMaps = mp.solve(next_dict_segments, next_dict_lrs, nb_apertures)  #  {beam_id: matrix}
         next_dict_segments, next_dict_lrs = sp.solve(dict_gradMaps)     # {beam_id: bool vector}

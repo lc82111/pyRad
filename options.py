@@ -37,7 +37,7 @@ class BaseOptions():
         parser.add_argument('--optimizer_name', default='adam', type=str, help='optimizer')
         parser.add_argument('--scheduler_name', default='CosineAnnealingLR', type=str, help='learning rate sheduler')
         parser.add_argument('--device', default='cpu', type=str, help='cpu | cuda; pls use cpu when compute MU*MCDose')
-        parser.add_argument('--logs_interval', default=15, type=int, help='log optimization info at this rate')
+        parser.add_argument('--logs_interval', default=15, type=int, help='log optimization info at interval steps')
         parser.add_argument('--smooth_weight', default=0.2, type=float, help=' fluence smooth regularization weight in fluence optim')
 
          # Monte Carlo parameters 
@@ -102,22 +102,22 @@ class BaseOptions():
         """Parse our options."""
         # parameters depending above 
         hparam = self.parser.parse_args()
+        patient_dir = f'../patients_data/{hparam.patient_ID}'
+        #  self.parser.add_argument('--deposition_file', default=patient_dir+'/dataset/Deposition_Index.txt', type=str, help='deposition matrix from tps')
+        #  self.parser.add_argument('--pointsPosition_file', default=patient_dir+'/dataset/PointsPosition.txt', type=str, help='points positions file')
+        #  self.parser.add_argument('--CT_RTStruct_dir', default=patient_dir+'/dataset/CT_RTStruct', type=str, help='ct and rtstruct dicom dir')
+        #  self.parser.add_argument('--valid_ray_file', default=patient_dir+'/dataset/ValidMatrix.txt', type=str, help='tps uses this file to indicate the correspondence between the bixels of fluence map and the rays of depostion matrix.')
+        #  self.parser.add_argument('--csv_file', default=patient_dir+'/dataset/OrganInfo.csv', type=str, help='this file defines optimization objectives')
+        #  self.parser.add_argument('--tps_ray_inten_file', default=patient_dir+'/dataset/TPSray.txt', type=str, help='bixel values optimized by TPS')
 
-        #  self.parser.add_argument('--deposition_file', default=hparam.patient_ID+'/dataset/Deposition_Index.txt', type=str, help='deposition matrix from tps')
-        #  self.parser.add_argument('--pointsPosition_file', default=hparam.patient_ID+'/dataset/PointsPosition.txt', type=str, help='points positions file')
-        #  self.parser.add_argument('--CT_RTStruct_dir', default=hparam.patient_ID+'/dataset/CT_RTStruct', type=str, help='ct and rtstruct dicom dir')
-        #  self.parser.add_argument('--valid_ray_file', default=hparam.patient_ID+'/dataset/ValidMatrix.txt', type=str, help='tps uses this file to indicate the correspondence between the bixels of fluence map and the rays of depostion matrix.')
-        #  self.parser.add_argument('--csv_file', default=hparam.patient_ID+'/dataset/OrganInfo.csv', type=str, help='this file defines optimization objectives')
-        #  self.parser.add_argument('--tps_ray_inten_file', default=hparam.patient_ID+'/dataset/TPSray.txt', type=str, help='bixel values optimized by TPS')
+        self.parser.add_argument('--optimized_segments_MUs_file_path', default=patient_dir+'/results/'+hparam.exp_name, type=str, help=' optimized seg and MUs saving path in column generation/aperture refine')
+        self.parser.add_argument('--optimized_fluence_file_path', default=patient_dir+'/results/'+hparam.exp_name, type=str, help='optimized fluence save path in Fluence Optim')
+        self.parser.add_argument('--refined_segments_MUs_file', default=patient_dir+'/results/'+hparam.exp_name, type=str, help='optimized MUs saving path in MU MonteCarlo optim')
 
-        self.parser.add_argument('--optimized_segments_MUs_file_path', default=hparam.patient_ID+'/results/'+hparam.exp_name, type=str, help=' optimized seg and MUs saving path in column generation/aperture refine')
-        self.parser.add_argument('--optimized_fluence_file_path', default=hparam.patient_ID+'/results/'+hparam.exp_name, type=str, help='optimized fluence save path in Fluence Optim')
-        self.parser.add_argument('--refined_segments_MUs_file', default=hparam.patient_ID+'/results/'+hparam.exp_name, type=str, help='optimized MUs saving path in MU MonteCarlo optim')
-
-        self.parser.add_argument('--deposition_pickle_file_path', default='/mnt/ssd/tps_optimization/'+hparam.patient_ID, type=str, help='parsed deposition matrix will be stored in this file')
-        self.parser.add_argument('--tensorboard_log', default=hparam.patient_ID+'/logs/'+hparam.exp_name, type=str, help='tensorboard directory')
-        self.parser.add_argument('--unitMUDose_npz_file', default=hparam.patient_ID+'/dataset/MonteCarlo/'+hparam.patient_ID+'/unitMUDose.npz', type=str, help='MCDose fetched from winServer will be save in this file')
-        self.parser.add_argument('--winServer_MonteCarloDir', default='/mnt/win_share/'+hparam.patient_ID, type=str, help='gDPM.exe save MCDose into this directory; this directory is shared by winServer')
+        self.parser.add_argument('--deposition_pickle_file_path', default='/mnt/ssd/tps_optimization/'+patient_dir, type=str, help='parsed deposition matrix will be stored in this file')
+        self.parser.add_argument('--tensorboard_log', default=patient_dir+'/logs/'+hparam.exp_name, type=str, help='tensorboard directory')
+        self.parser.add_argument('--unitMUDose_npz_file', default=patient_dir+'/dataset/MonteCarlo/'+patient_dir+'/unitMUDose.npz', type=str, help='MCDose fetched from winServer will be save in this file')
+        self.parser.add_argument('--winServer_MonteCarloDir', default='/mnt/win_share/'+patient_dir, type=str, help='gDPM.exe save MCDose into this directory; this directory is shared by winServer')
 
         hparam = self.parser.parse_args()
         hparam = vars(hparam) # namespace to dict
@@ -126,11 +126,12 @@ class BaseOptions():
         # some file names may vary between patients 
         for k, v in zip(['deposition_file', 'tps_ray_inten_file', 'valid_ray_file', 'csv_file', 'pointsPosition_file', 'MonteCarlo_dir'], \
                         ['Deposition_Index', 'TPSray', 'ValidMatrix', 'OrganInfo', 'PointsPosition.txt', 'Pa*GPU']):
-            path = Path(hparam.patient_ID, 'dataset', '*'+v+'*')
+            path = Path(patient_dir, 'dataset', '*'+v+'*')
             fn = glob.glob(str(path))[0]
             hparam[k] = fn
-
-        DICOM_dir = Path(hparam.patient_ID, 'dataset', 'DICOM')
+        
+        # dicom dir
+        DICOM_dir = Path(patient_dir, 'dataset', 'DICOM')
         if DICOM_dir.is_dir():
             hparam.CT_RTStruct_dir = str(DICOM_dir)
         else:

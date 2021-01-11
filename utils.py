@@ -1,4 +1,3 @@
-
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import numpy as np
@@ -70,12 +69,18 @@ def split_doses(doses, organ_inf):
 
 def parse_MonteCarlo_dose(MCDose, data):
     ''' Return: dict_organ_dose {organ_name: dose ndarray (#organ_dose, )} '''
-    pdb.set_trace()
     dict_organ_dose = OrderedBunch()
     for organ_name, msk in data.organ_masks.items():
         dict_organ_dose[organ_name] = MCDose[msk]
     return dict_organ_dose 
 
+def get_segment_grad(dict_segments, dict_rayBoolMat):
+    dict_gradMaps = OrderedBunch()
+    for beam_id, mask in dict_rayBoolMat.items(): # for each beam
+        grad = dict_segments[beam_id].grad.detach().cpu().numpy()  # (h*w, #aperture=1)
+        grad = grad.sum(axis=-1)  # (h*w)
+        dict_gradMaps[beam_id] = grad.reshape(*mask.shape) * mask
+    return dict_gradMaps
 
 def multiply_dict(dict_gradMaps, dict_segments):
     ''' dot product grad and seg
