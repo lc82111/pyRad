@@ -1,0 +1,44 @@
+----------------- Options ---------------
+              CGDeposPlan: False                         
+    CGDeposPlan_doseScale: 1.0                           
+          CT_RTStruct_dir: test/dataset/CT_RTStruct      
+  Calculate_MC_unit_doses: False                         
+         FluenceOptimPlan: False                         
+             MCDose_shape: [167, 256, 256]               
+                 MCJYPlan: False                         
+          MCMURefinedPlan: False                         
+                   MCPlan: False                         
+    MU_refine_total_steps: 6000                          
+      TPSFluenceOptimPlan: False                         
+                 csv_file: test/dataset/OrganInfo.csv    
+  dense_deposition_matrix: False                         
+          deposition_file: test/dataset/Deposition_Index.txt
+deposition_pickle_file_path: /mnt/ssd/tps_optimization/test
+                   device: cpu                           
+               dose_scale: 0.001                         
+                 exp_name: test                          	[default: None]
+   is_check_ray_idx_order: False                         
+            learning_rate: 0.01                          
+            logs_interval: 15                            
+             master_steps: 5000                          
+              max_fluence: 5                             
+             nb_apertures: 10                            
+    optimization_continue: False                         
+optimized_fluence_file_path: test/results/test             
+optimized_segments_MUs_file_path: test/results/test             
+           optimizer_name: adam                          
+             organ_filter: None                          
+               patient_ID: test                          	[default: None]
+         plateau_patience: 50                            
+           priority_scale: 0.01                          
+refined_segments_MUs_file: test/results/test             
+           scheduler_name: CosineAnnealingLR             
+            smooth_weight: 0.2                           
+                    steps: 5000                          
+          tensorboard_log: test/logs/test                
+       tps_ray_inten_file: test/dataset/TPSray.txt       
+      unitMUDose_npz_file: test/dataset/MonteCarlo/test/unitMUDose.npz
+           valid_ray_file: test/dataset/ValidMatrix.txt  
+  winServer_MonteCarloDir: /mnt/win_share/test           
+     winServer_nb_threads: 5                             
+----------------- End -------------------
