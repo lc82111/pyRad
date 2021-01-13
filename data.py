@@ -65,6 +65,7 @@ class Data():
         for beam_id, mask in self.dict_rayBoolMat.items():
             self.dict_beamID_ValidRayBeginNum[beam_id] = [begin, mask.sum()]  # {beam_id: (ray_begin_idx, num_rays)}
             begin += mask.sum()
+        pp.pprint(f'beam_id: (ray_begin_idx, num_rays) {self.dict_beamID_ValidRayBeginNum}')
 
         # check
         num_bixel = 0

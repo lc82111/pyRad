@@ -165,30 +165,35 @@ def computer_fluence(data, dict_segments, dict_MUs):
     fluence.retain_grad()
     return fluence, dict_fluenceMaps
 
-def cal_dose(deposition, fluence):
+def cal_dose(D, fluence):
     ''' cal dose from depos and fluence
     Arguments:
         fluence: tensor (#bixel, )
-        depos: tensor (#dose_points, #bixel)
+        D deposition: tensor (#dose_points, #bixel)
     Return: dose: tensor (#dose_points, )
     '''
     if fluence.dim() == 1:
         fluence = fluence.unsqueeze(dim=1)
-    if deposition.is_sparse:  # sparse matrix
-        dose = torch.sparse.mm(deposition, fluence) 
+    if D.is_sparse:  # sparse matrix
+        dose = torch.sparse.mm(D, fluence) 
     else:
-        dose = torch.mm(deposition, fluence) 
+        dose = torch.mm(D, fluence) 
     return dose.squeeze()
 
-def convert_depoMatrix_to_tensor(deposition, device):
-    """ Convert a scipy Sparse Matrix to a torch Sparse Tensor when necessary"""
-    # deposition matrix (#voxels, #bixels)
-    if type(deposition).__module__ == 'scipy.sparse.coo':  # sparse matrix
-        deposition = torch.sparse.FloatTensor(torch.LongTensor([deposition.row, deposition.col]), torch.tensor(deposition.data), torch.Size(deposition.shape))
-        deposition = deposition.to(device=device, dtype=torch.float32)
+def convert_depoMatrix_to_tensor(D, device):
+    """ Convert a scipy Sparse Matrix D to a torch Sparse Tensor when necessary"""
+    # D matrix (#voxels, #bixels)
+    if type(D).__module__ == 'scipy.sparse.coo':  # sparse matrix
+        D = torch.sparse.FloatTensor(torch.LongTensor([D.row, D.col]), torch.tensor(D.data), torch.Size(D.shape))
+        D = D.to(device=device, dtype=torch.float32)
+    elif isinstance(D, OrderedBunch):
+        for beam_id, d in D.items():
+            d = torch.sparse.FloatTensor(torch.LongTensor([d.row, d.col]), torch.tensor(d.data), torch.Size(d.shape))
+            d = d.to(device=device, dtype=torch.float32)
+            D.update({beam_id: d})
     else: # dense matrix
-        deposition = torch.tensor(deposition, dtype=torch.float32, device=self.hparam.device)
-    return deposition
+        D = torch.tensor(D, dtype=torch.float32, device=self.hparam.device)
+    return D
 
 
 def load_npz(npz_path):
