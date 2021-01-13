@@ -56,14 +56,17 @@ class Data():
         cprint('parsing valid ray data.', 'green')
         self.dict_rayBoolMat, self.dict_rayIdxMat, self.num_beams = self._read_rayIdx_mat() 
         self._set_beamID_rayBeginNum_dict()
+        self._set_splitted_depositionMatrix()
 
     def _set_beamID_rayBeginNum_dict(self):
+        '''set dict  {beam_id: (ray_begin_idx, num_rays)}'''
         self.dict_beamID_ValidRayBeginNum = OrderedBunch()
         begin = 0
         for beam_id, mask in self.dict_rayBoolMat.items():
-            self.dict_beamID_ValidRayBeginNum[beam_id] = [begin, mask.sum()] 
+            self.dict_beamID_ValidRayBeginNum[beam_id] = [begin, mask.sum()]  # {beam_id: (ray_begin_idx, num_rays)}
             begin += mask.sum()
 
+        # check
         num_bixel = 0
         for beam_id, (_, num) in self.dict_beamID_ValidRayBeginNum.items():
             num_bixel += num
@@ -173,6 +176,13 @@ class Data():
         # save
         pickle_object(os.path.join(self.hparam.deposition_pickle_file_path, 'deposition.pickle'), D)
         return D
+    
+    def _set_splitted_depositionMatrix(self):
+        ''' split depostion matrix, such that a matrix corresponding a beam '''
+        D = self.deposition.tocsc() # Convert to Compressed Sparse Column format which supports column slice 
+        self.dict_beamID_Deps = OrderedBunch()
+        for beam_id, (begin, num) in self.dict_beamID_ValidRayBeginNum.items():
+            self.dict_beamID_Deps[beam_id] = D[:, begin:begin+num].tocoo() # slice then back to coo format
 
     def _set_paramters_from_csv_table(self):
         df = pd.read_csv(self.hparam.csv_file, skiprows=1, index_col=0, skip_blank_lines=True)  # duplicated column will be renamed automatically
@@ -251,11 +261,11 @@ class Data():
         assert ray_num == self.max_ray_idx
         assert ray_num == self.deposition.shape[1], f'shape not match: rayNum={ray_num}, deposition_matrix shape={D.shape}'
 
-        # convert 1 to ray idx
+        # convert 1 in bool matrixes to ray idx
         dict_rayIdxMat = collections.OrderedDict()
         ray_idx = -1
         for beam_id, FM in dict_rayBoolMat.items():
-            idx_matrix = np.full_like(FM, self.max_ray_idx, dtype=np.int)  # using max_ray_idx to indicate non-valid ray 
+            idx_matrix = np.full_like(FM, self.max_ray_idx, dtype=np.int)  # NOTE: using max_ray_idx to indicate non-valid ray 
             for row in range(FM.shape[0]):
                 for col in range(FM.shape[1]):
                     if FM[row, col] == 1:
