@@ -180,7 +180,10 @@ class Data():
     
     def _set_splitted_depositionMatrix(self):
         ''' split depostion matrix, such that a matrix corresponding a beam '''
-        D = self.deposition.tocsc() # Convert to Compressed Sparse Column format which supports column slice 
+        cprint('[warning] remove peripheral_tissue dose grid points from deposition matrix', 'red')
+        D = self.deposition.tocsr()
+        D = D[0:self.get_pointNum_from_organName('ITV_skin')]
+        #D = self.deposition.tocsc() # Convert to Compressed Sparse Column format which supports column slice 
         self.dict_beamID_Deps = OrderedBunch()
         for beam_id, (begin, num) in self.dict_beamID_ValidRayBeginNum.items():
             self.dict_beamID_Deps[beam_id] = D[:, begin:begin+num].tocoo() # slice then back to coo format

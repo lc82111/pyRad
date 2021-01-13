@@ -188,8 +188,8 @@ def convert_depoMatrix_to_tensor(D, device):
         D = D.to(device=device, dtype=torch.float32)
     elif isinstance(D, OrderedBunch):
         for beam_id, d in D.items():
-            d = torch.sparse.FloatTensor(torch.LongTensor([d.row, d.col]), torch.tensor(d.data), torch.Size(d.shape))
-            d = d.to(device=device, dtype=torch.float32)
+            #  d = torch.sparse.FloatTensor(torch.LongTensor([d.row, d.col]), torch.tensor(d.data), torch.Size(d.shape))
+            d = torch.sparse_coo_tensor(torch.LongTensor([d.row, d.col]), torch.tensor(d.data), torch.Size(d.shape), dtype=torch.float32, device=device)
             D.update({beam_id: d})
     else: # dense matrix
         D = torch.tensor(D, dtype=torch.float32, device=self.hparam.device)
