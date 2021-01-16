@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import numpy as np
+from tqdm import tqdm
 from braceexpand import braceexpand
 from scipy.ndimage.measurements import label 
 from orderedbunch import OrderedBunch
@@ -122,7 +123,7 @@ class NerualDose():
         for j in range(segs.shape[-1]): # for each aperture
             tmp = segs[:,j][mask.flatten()]
             unitNeuralDose = self.get_neuralDose_for_an_aperture(tmp, beam_id) # 3D unit dose (D,H,W)
-            neuralDose += unitNeuralDose * MUs[j]  # x MU
+            neuralDose += unitNeuralDose * MUs[j].to('cpu')  # x MU
         return neuralDose
 
     def get_neuralDose_for_an_aperture(self, segment, beam_id):
@@ -141,7 +142,8 @@ class NerualDose():
         inputs = inputs.unsqueeze(0)
 
         # forward throught net  # with torch.no_grad():
-        unitNeuralDose = self.net(inputs)
+        with torch.cuda.amp.autocast():
+            unitNeuralDose = self.net(inputs.to('cpu'))
         unitNeuralDose = torch.relu(unitNeuralDose.squeeze())
         unitNeuralDose = self.transform.strip_padding_depths(unitNeuralDose)
         return unitNeuralDose 
@@ -160,7 +162,7 @@ class NerualDose():
 
         net.eval()
         for k, v in net.named_parameters(): v.requires_grad_(False)  # try to save memory
-        if 'cuda' in self.hparam.device: net.to(self.hparam.device)
+        net.to('cpu')
         return net
 
 class MasterProblem():
@@ -441,8 +443,8 @@ class Optimization():
         optimizer, scheduler = self._get_optimizer(list(dict_MUs.values()) + list(dict_partialExp.values()), learning_rate, steps, optimizer_name, scheduler_name)
 
         # loop
-        min_loss, patience = np.inf, 0
-        for i in range(steps):
+        self.min_loss, self.patience = np.inf, 0
+        for i in tqdm(range(steps)):
             # forward
             self.global_step += 1
             loss = self.forward(dict_segments, dict_partialExp, dict_lrs, dict_MUs) # (#vaild_bixels,)
@@ -451,36 +453,38 @@ class Optimization():
             optimizer.zero_grad()
             loss.backward(retain_graph=False) # acccumulate gradients
 
-            # best state
-            if to_np(loss) < min_loss:
-                min_loss = to_np(loss)
-                patience = 0
-                self._save_best_state(min_loss, dict_MUs, dict_segments, dict_lrs, dict_partialExp)
-
             # optim
             optimizer.step() # do gradient decent w.r.t MU and partialExp
             self._step_lrs_segments(dict_partialExp, dict_lrs, dict_segments) # ajust leafs position in place: dict_segments and dict_lrs
             scheduler.step() # adjust learning rate
 
-            # early stop
-            if to_np(loss) > min_loss:
-                patience += 1
-            if patience > self.hparam.plateau_patience:
-                cprint(f'Loss dose not drop in last {patience} iters. Early stopped.', 'yellow')
-                break
+            # ckpt and early stop 
+            if self._ckpt_earlyStop(loss, dict_MUs, dict_segments, dict_lrs, dict_partialExp): break
 
         return self.best_dict_gradMap, self.best_dict_MUs, self.best_dict_segments, self.best_dict_lrs, self.best_dict_partialExp, self.best_loss
     
-    def _save_best_state(self, loss, dict_MUs, dict_segments, dict_lrs, dict_partialExp):
-        self.best_loss = loss
-        self.best_dict_MUs, self.best_dict_segments, self.best_dict_lrs, self.best_dict_partialExp = OrderedBunch(), OrderedBunch(), OrderedBunch(), OrderedBunch() # NOTE: use [OrderedBunch,]*4 will mix best_dict_segments and best_dict_lrs. I donot know why
-        for beam_id, lrs in dict_lrs.items():  # for each beam
-            self.best_dict_MUs[beam_id]        = to_np(dict_MUs[beam_id])
-            self.best_dict_segments[beam_id]   = to_np(dict_segments[beam_id])
-            self.best_dict_partialExp[beam_id] = to_np(dict_partialExp[beam_id])
-            self.best_dict_lrs[beam_id]        = lrs
-        # grad of fluence or segment
-        self.best_dict_gradMap = get_segment_grad(dict_segments, self.data.dict_rayBoolMat)
+    def _ckpt_earlyStop(self, loss, dict_MUs, dict_segments, dict_lrs, dict_partialExp, precision=2):
+        loss = to_np(loss)
+
+        # best status / checkpoint 
+        if np.round(loss, precision) < np.round(self.min_loss, precision):
+            self.min_loss, self.patience = loss, 0
+            self.best_loss = loss
+            self.best_dict_MUs, self.best_dict_segments, self.best_dict_lrs, self.best_dict_partialExp = OrderedBunch(), OrderedBunch(), OrderedBunch(), OrderedBunch() # NOTE: use [OrderedBunch,]*4 will mix best_dict_segments and best_dict_lrs. I donot know why
+            for beam_id, lrs in dict_lrs.items():  # for each beam
+                self.best_dict_MUs[beam_id]        = to_np(dict_MUs[beam_id])
+                self.best_dict_segments[beam_id]   = to_np(dict_segments[beam_id])
+                self.best_dict_partialExp[beam_id] = to_np(dict_partialExp[beam_id])
+                self.best_dict_lrs[beam_id]        = lrs
+            # grad of fluence or segment
+            self.best_dict_gradMap = get_segment_grad(dict_segments, self.data.dict_rayBoolMat)
+
+        # early stop
+        if np.round(loss, precision) >= np.round(self.min_loss, precision): self.patience += 1
+        if self.patience > self.hparam.plateau_patience:
+            cprint(f'Loss dose not drop in last {self.patience} iters. Early stopped.', 'yellow')
+            return True 
+        return False
 
     def _modulate_segment_with_partialExposure(self, segs, pes, lrs, rayMat):
         '''
@@ -575,7 +579,7 @@ class Optimization():
                     self.tb_writer.add_histogram(f'dose histogram/{organ_name}', dose, self.global_step)
             # fluence and segment maps 
             for beam_id, FM in self.dict_fluenceMaps.items():
-                self.tb_writer.add_image(f'FluenceMaps/{beam_id}', FM, self.global_step, dataformats='HW')
+                self.tb_writer.add_image(f'FluenceMaps/{beam_id}', FM/self.hparam.max_fluence, self.global_step, dataformats='HW') # scale FM to max_fluence
                 high, width = FM.size()
                 segs = dict_segments[beam_id].detach() # matrix
                 for col_idx in range(segs.size(1)):
@@ -616,7 +620,7 @@ def save_result(mp):
         pes = mp.dict_partialExp[beam_id] # (#aperture, H, 2)
         seg = _modulate_segment_with_partialExposure(seg, lrs, pes)
 
-        results[beam_id] = {'MU': np.abs(MU), 'Seg': seg, 'lrs':lrs, 'PEs':pes, 'global_step':mp.optimizer.global_step} 
+        results[beam_id] = {'MU': np.abs(MU), 'Seg': seg, 'lrs':lrs, 'PEs':pes, 'global_step':mp.optim.global_step} 
 
     if not os.path.isdir(hparam.optimized_segments_MUs_file_path):
         os.makedirs(hparam.optimized_segments_MUs_file_path)

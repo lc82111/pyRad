@@ -13,8 +13,8 @@ python3 ./columnGen_apertureRefine_NeuralDose.py \
   --net_output_shape 61,128,128 \
   --patient_ID Chest_original_Pa34Plan30Rx31GPU \
   --MCDose_shape 122,256,256 \
-  --exp_name test \
-  --nb_apertures 10 \
+  --exp_name 20210114 \
+  --nb_apertures 5 \
   --master_steps 1500 \
   --learning_rate 0.01 \
   --plateau_patience 30 \
