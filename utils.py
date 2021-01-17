@@ -71,8 +71,43 @@ def parse_MonteCarlo_dose(MCDose, data):
     ''' Return: dict_organ_dose {organ_name: dose ndarray (#organ_dose, )} '''
     dict_organ_dose = OrderedBunch()
     for organ_name, msk in data.organ_masks.items():
+        assert MCDose.shape == msk.shape 
         dict_organ_dose[organ_name] = MCDose[msk]
     return dict_organ_dose 
+
+def call_FM_gDPM_on_windowsServer(PID, nb_beams, nb_apertures, nb_threads, host_ip="192.168.10.103", port=13000):
+    cprint(f'send msg to windows Server to call FM.exe and gDPM.exe.', 'green')
+
+    addr = (host_ip, port)
+    UDPSock = socket(AF_INET, SOCK_DGRAM)
+    msg = "seg.txt files are ready;%s;%s;%s;%s"%(PID, nb_beams, nb_apertures, nb_threads)
+    data = msg.encode('utf-8')
+    UDPSock.sendto(data, addr)
+    UDPSock.close()
+    cprint("messages send.", 'green')
+
+    try:
+        host_ip = "0.0.0.0"
+        port = 13001
+        buf = 1024
+        addr = (host_ip, port)
+        UDPSock = socket(AF_INET, SOCK_DGRAM)
+        UDPSock.bind(addr)
+        cprint("Waiting to receive messages...", 'green')
+        while True:
+            (data, addr) = UDPSock.recvfrom(buf)
+            msg = '%s'%(data)
+            if 'done' in msg:
+                break
+        UDPSock.close()
+        cprint("winServer say mission completed ", 'green')
+    except KeyboardInterrupt:
+        print('ctl-c pressed; exit.....')
+        UDPSock.close()
+        os._exit(0)
+    except Exception as e:
+        cprint(f"Error in call_FM_gDPM_on_windowsServer: {e}", 'red')
+        os._exit(0)
 
 def get_segment_grad(dict_segments, dict_rayBoolMat):
     dict_gradMaps = OrderedBunch()

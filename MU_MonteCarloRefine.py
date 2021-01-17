@@ -72,7 +72,7 @@ class MonteCarlo():
         self.nb_threads   = 8    # threads windows server will run
 
         self._get_leafBottomEdgePosition()
-        self._get_leafInJawField()  # get y axis leaf position from jaw_y1 ,jaw_y2
+        self._get_leafInJawField()   # get y axis leaf position from jaw_y1 ,jaw_y2
         self._get_x_axis_position()  # get x axis position from optimized_segments_MUs_file
 
     def _get_leafBottomEdgePosition(self):

@@ -28,7 +28,7 @@ from utils import *
 from data import Data
 from loss import Loss
 from options import BaseOptions
-from monteCarlo import MonteCarlo, parse_MonteCarlo_dose
+from monteCarlo import MonteCarlo
 
 
 class Evaluation():
@@ -37,20 +37,20 @@ class Evaluation():
 
         # init data and loss
         self.data = Data(hparam)
-        self.loss = Loss(hparam, self.data.csv_table)
+        self.loss = Loss(hparam, self.data.csv_loss_table)
 
-        # deposition matrix (#voxels, #bixels)
+        # deposition matrix (#doseGrid, #bixels)
         self.deposition = convert_depoMatrix_to_tensor(self.data.deposition, self.hparam.device)
         
         # MC dose
-        if hparam.MCPlan or hparam.MCJYPlan or hparam.MCMURefinedPlan:
+        if hparam.MCPlan or hparam.MCJYPlan or hparam.MCMURefinedPlan or hparam.NeuralDosePlan:
             self.mc = MonteCarlo(hparam, self.data)
-            self.unitMUDose = self.mc.get_unit_MCdose()
+            self.unitMUDose = self.mc.get_all_beams_unit_MCdose()  # unitMUDose, ndarray (nb_beams*nb_apertures, D, H, W) 
 
     def load_MonteCarlo_OrganDose(self, MUs, name, scale=1):
         MUs = np.abs(MUs) / self.hparam.dose_scale  # x1000
         MCdoses = self.unitMUDose * MUs * scale
-        MCdoses = MCdoses.sum(axis=0, keepdims=False)  #  (#slice, H, W) 
+        MCdoses = MCdoses.sum(axis=0, keepdims=False)  #  (D, H, W) 
         MCdoses = torch.tensor(MCdoses, dtype=torch.float32, device=self.hparam.device)
         dict_organ_doses = parse_MonteCarlo_dose(MCdoses, self.data)  # parse organ_doses to obtain individual organ doses
         return OrderedBunch({'dose':dict_organ_doses, 'name':name})
@@ -171,6 +171,8 @@ class Evaluation():
 
     def run(self):
         plans_to_compare = []
+        if self.hparam.NeuralDosePlan:
+            plans_to_compare.append(self.load_MonteCarlo_OrganDose(self.mc.old_MUs, 'NeuralDose'))
         if self.hparam.CGDeposPlan:
             plans_to_compare.append(self.load_Depos_OrganDose('CG_depos', scale=self.hparam.CGDeposPlan_doseScale))
         if self.hparam.MCPlan:

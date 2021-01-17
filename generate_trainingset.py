@@ -182,6 +182,8 @@ class MonteCarlo():
 
         self.nb_leafPairs = 51    # 51 leaf pairs
         self.x_spacing    = 0.5   # cm
+        cprint(f'using number of leaves {self.nb_leafPairs}, grid size {self.x_spacing} cm for x axis', 'red')  # juyao told me
+
         self.nb_apertures = 1000 # we will generate this number random apertures
         self.nb_beams     = data.num_beams
         
@@ -371,7 +373,7 @@ class MonteCarlo():
             self.nb_apertures
             self.nb_beams
         Outputs:
-            seg*.txt 
+            seg*.txt on windowsServer 
         """
         ## write Seg_{beam_id}_{aperture_id}.txt 
         for beam_id in range(1, self.nb_beams+1):
@@ -390,7 +392,7 @@ class MonteCarlo():
 
         cprint(f'Done. {self.nb_beams*self.nb_apertures} Seg*.txt files have been written to Dir {self.hparam.winServer_MonteCarloDir}/segs.', 'green')
 
-    def get_unit_MCdose(self):
+    def cal_unit_MCdose_on_windows(self):
         ''' Return: unitMUDose, ndarray (nb_beams*nb_apertures, #slice, H, W)  '''
         self._get_x_axis_position()  # get x axis position from the saved random generated fluences
 
@@ -402,7 +404,8 @@ class MonteCarlo():
         pdb.set_trace()
 
     def get_dose(self, uid): 
-        ''' return:mcDose(#slice, H, W) '''
+        ''' get calculated dose from windows
+            Return:mcDose(#slice, H, W) '''
         dpm_result_dir = Path(self.hparam.winServer_MonteCarloDir, 'gDPM_results', f'dpm_result_{uid}Ave.dat')
         with open(dpm_result_dir, 'rb') as f:
             dose = np.fromfile(f, dtype=np.float32)
@@ -673,7 +676,7 @@ def main(hparam):
 
     if hparam.Calculate_MC_unit_doses:
         mc.get_random_apertures()
-        mc.get_unit_MCdose()
+        mc.cal_unit_MCdose_on_windows()
 
     pb = PencilBeam(hparam, data)
 

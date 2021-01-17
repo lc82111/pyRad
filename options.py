@@ -54,11 +54,12 @@ class BaseOptions():
         parser.add_argument("--net", type=str, default='Unet3D', help="network types: Unet3D|DeepLab3D|DeepLab2D|Unet2D")
         parser.add_argument("--norm_type", type=str, default='GroupNorm', help="batch norm type: GroupNorm|InstanceNorm3d")
         parser.add_argument("--ckpt_path", type=str, default='', help="load check point. Using empty string to avoid the load. Can be used to continue the training.")
-        parser.add_argument('--data_dir', type=str, default='', required=True, help='data root for datasets.')
+        parser.add_argument('--data_dir', type=str, default='', help='data root for datasets.')
         parser.add_argument("--num_depth", type=int, default=64, help="choose data depth (i.e.num_slices) for 3D net")
         parser.add_argument('--net_output_shape', default='', type=str, help='net output shape')
     
         # evaluation parameters
+        parser.add_argument('--NeuralDosePlan', action="store_true")
         parser.add_argument('--TPSFluenceOptimPlan', action="store_true")
         parser.add_argument('--FluenceOptimPlan', action="store_true")
         parser.add_argument('--CGDeposPlan', action="store_true")
