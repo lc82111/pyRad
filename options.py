@@ -136,7 +136,7 @@ class BaseOptions():
         if DICOM_dir.is_dir():
             hparam.CT_RTStruct_dir = str(DICOM_dir)
         else:
-            raise ValueError
+            raise ValueError(f'can not find DICOM dir {DICOM_dir}')
 
         # mc dose shape
         hparam.MCDose_shape = [int(x) for x in hparam.MCDose_shape.split(',')]
