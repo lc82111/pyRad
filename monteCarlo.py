@@ -188,7 +188,6 @@ class MonteCarlo():
             if (row==0).all():  # closed row
                 lr = default_lr; first,last=0,0 
             else: # opened row
-                assert len(np.nonzero(row)[0]) == 2, 'Error: isolate 1 or multiple 1 regions'
                 first, last = np.nonzero(row)[0][[0,-1]]  # get first 1 and last 1 positions
                 #  last += 1 # block the left bixel of first 1, and right bixel of last 1; TODO +1?
                 l = jaw_x1 + first*self.x_spacing # spacing 0.5mm

@@ -64,7 +64,6 @@ def _smallest_contiguous_sum_2d(grad_map):
     row_segs, lrs = [], []
     for row in grad_map:
         seg, lr = _smallest_contiguous_sum(row)
-        assert len(np.nonzero(seg)[0]) == 2, 'Error: isolate 1 or multiple 1 regions'
         row_segs.append(seg)
         lrs.append(lr)
     segment  = np.concatenate(row_segs, axis=0) # a long flatten bool vector
