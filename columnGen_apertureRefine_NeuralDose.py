@@ -311,7 +311,7 @@ class Optimization():
                                 print(l,r)
                             assert l != r
 
-    def _get_partial_exposure_tensor(self, lrs, seg, bixel_shape):
+    def _get_partial_exposure_tensor(self, lrs, seg, bixels_shape):
         '''
         Set partial exposed (pe) variable tensors for optimization, and modify the segment elements corresponding the pes. 
         lrs: ndarray (#aperture, H, 2), 2=(l,r)
@@ -334,7 +334,7 @@ class Optimization():
                 else: raise NotImplementedError
             return [l, r]
        
-        H, W = bixel_shape
+        H, W = bixels_shape
         # set partial exposure tensor
         pes = torch.full(lrs.shape, fill_value=0., dtype=torch.float32, device=self.hparam.device, requires_grad=True) # sigmoid(0)=0.5
 
@@ -457,7 +457,7 @@ class Optimization():
             mask = torch.tensor(mask, dtype=torch.bool, device=self.hparam.device)
             # modulate segment with partial exposure
             pe = torch.sigmoid(dict_partialExp[beam_id])  # [0,1] constraint
-            segs = self._modulate_segment_with_partialExposure(dict_segments[beam_id], pe, dict_lrs[beam_id], bixel_shape=mask.shape)
+            segs = self._modulate_segment_with_partialExposure(dict_segments[beam_id], pe, dict_lrs[beam_id], mask.shape)
             MUs = dict_MUs[beam_id]
             neuralDose += self.neuralDose.get_neuralDose_for_a_beam(beam_id, MUs, segs, mask, False)
             with torch.no_grad(): # for visualization
