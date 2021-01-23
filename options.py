@@ -42,7 +42,7 @@ class BaseOptions():
 
          # Monte Carlo parameters 
         parser.add_argument("--Calculate_MC_unit_doses", action='store_true', help='if true, running FM.exe and gDPM.exe on winServer')
-        parser.add_argument('--winServer_nb_threads', default=5, type=int, help='number of threads used for gDPM.exe. Too many threads may overflow the GPU memory')
+        parser.add_argument('--winServer_nb_threads', default=12, type=int, help='number of threads used for gDPM.exe. Too many threads may overflow the GPU memory')
         parser.add_argument('--test_pbmcDoses', action="store_true", help='if true, plot generated pencilbeam and mc doses')
         parser.add_argument('--test_mcDose', action="store_true", help='if true, plot mc doses')
         parser.add_argument('--mcpbDose2npz', action="store_true", help='if true, calculate and save the pencilbeam mc doses to npz files.')
@@ -66,10 +66,10 @@ class BaseOptions():
         parser.add_argument('--MCPlan', action="store_true")
         parser.add_argument('--MCJYPlan', action="store_true")
         parser.add_argument('--MCMURefinedPlan', action="store_true")
-        parser.add_argument('--organ_filter', nargs='+', help='only evaluating these organs')
+        parser.add_argument('--consider_organs', nargs='+', help='only consider these organs')
         parser.add_argument('--CGDeposPlan_doseScale', default=1.0, type=float, help='dose scale for column gen depos plan')
-        #organ_filter = ['PTV1-nd2-nx2', 'PTV2', 'PGTVnd', 'PGTVnx', 'Temp.lobe_L', 'Temp.lobe_R', 'Parotid_L', 'Parotid_R', 'Mandible', 'Brainstem+2mmPRV', 'Cord+5mmPRV']
-        #organ_filter = ['PTV-smallupper', 'PGTV-plan', 'R1.5', 'Extended_PTV', 'peripheral_tissue']
+        parser.add_argument('--cal_gamma', action="store_true")
+        parser.add_argument('--gamma_organ', default='skin', type=str, help='only consider this organ')
 
         self.parser = parser
 
@@ -103,34 +103,41 @@ class BaseOptions():
         """Parse our options."""
         # parameters depending above 
         hparam = self.parser.parse_args()
-        patient_dir = f'../patients_data/{hparam.patient_ID}'
-        #  self.parser.add_argument('--deposition_file', default=patient_dir+'/dataset/Deposition_Index.txt', type=str, help='deposition matrix from tps')
-        #  self.parser.add_argument('--pointsPosition_file', default=patient_dir+'/dataset/PointsPosition.txt', type=str, help='points positions file')
-        #  self.parser.add_argument('--CT_RTStruct_dir', default=patient_dir+'/dataset/CT_RTStruct', type=str, help='ct and rtstruct dicom dir')
-        #  self.parser.add_argument('--valid_ray_file', default=patient_dir+'/dataset/ValidMatrix.txt', type=str, help='tps uses this file to indicate the correspondence between the bixels of fluence map and the rays of depostion matrix.')
-        #  self.parser.add_argument('--csv_file', default=patient_dir+'/dataset/OrganInfo.csv', type=str, help='this file defines optimization objectives')
-        #  self.parser.add_argument('--tps_ray_inten_file', default=patient_dir+'/dataset/TPSray.txt', type=str, help='bixel values optimized by TPS')
+        patient_dir = f'./patients_data/{hparam.patient_ID}'
+        patient_dir_winServer = f'./{hparam.patient_ID}'
 
         self.parser.add_argument('--optimized_segments_MUs_file_path', default=patient_dir+'/results/'+hparam.exp_name, type=str, help=' optimized seg and MUs saving path in column generation/aperture refine')
         self.parser.add_argument('--optimized_fluence_file_path', default=patient_dir+'/results/'+hparam.exp_name, type=str, help='optimized fluence save path in Fluence Optim')
+        self.parser.add_argument('--evaluation_result_path', default=patient_dir+'/results/'+hparam.exp_name, type=str, help='optimized fluence save path in Fluence Optim')
         self.parser.add_argument('--refined_segments_MUs_file', default=patient_dir+'/results/'+hparam.exp_name, type=str, help='optimized MUs saving path in MU MonteCarlo optim')
 
         self.parser.add_argument('--deposition_pickle_file_path', default='/mnt/ssd/tps_optimization/'+patient_dir, type=str, help='parsed deposition matrix will be stored in this file')
         self.parser.add_argument('--tensorboard_log', default=patient_dir+'/logs/'+hparam.exp_name, type=str, help='tensorboard directory')
-        self.parser.add_argument('--unitMUDose_npz_file', default=patient_dir+'/dataset/MonteCarlo/'+patient_dir+'/unitMUDose.npz', type=str, help='MCDose fetched from winServer will be save in this file')
-        self.parser.add_argument('--winServer_MonteCarloDir', default='/mnt/win_share/'+patient_dir, type=str, help='gDPM.exe save MCDose into this directory; this directory is shared by winServer')
+        self.parser.add_argument('--unitMUDose_npz_file', default=patient_dir+'/dataset/unitMUDose.npz', type=str, help='MCDose fetched from winServer will be save in this file')
+        self.parser.add_argument('--winServer_MonteCarloDir', default='/mnt/win_share/'+patient_dir_winServer, type=str, help='gDPM.exe save MCDose into this directory; this directory is shared by winServer')
 
         hparam = self.parser.parse_args()
         hparam = vars(hparam) # namespace to dict
         hparam = OrderedBunch(hparam)
 
         # some file names may vary between patients 
-        for k, v in zip(['deposition_file', 'tps_ray_inten_file', 'valid_ray_file', 'csv_file', 'pointsPosition_file', 'MonteCarlo_dir'], \
-                        ['Deposition_Index', 'TPSray', 'ValidMatrix', 'OrganInfo', 'PointsPosition.txt', 'Pa*GPU']):
+        for k, v in zip(['deposition_file', 'tps_ray_inten_file', 'csv_file', 'pointsPosition_file', 'MonteCarlo_dir'], \
+                        ['Deposition_Index', 'TPSray', 'OrganInfo', 'PointsPosition.txt', 'Pa*GPU']):
             path = Path(patient_dir, 'dataset', '*'+v+'*')
             fn = glob.glob(str(path))[0]
             hparam[k] = fn
         
+        # original or skin valid_ray_file
+        fns = glob.glob(os.path.join(patient_dir, 'dataset', '*ValidMatrix*'))
+        assert len(fns) != 0
+        for fn in fns:
+            if 'original' in fn: 
+                hparam['original_valid_ray_file'] = fn
+                continue
+            if 'skin' in fn: 
+                hparam['skin_valid_ray_file'] = fn
+                continue
+
         # dicom dir
         DICOM_dir = Path(patient_dir, 'dataset', 'DICOM')
         if DICOM_dir.is_dir():
@@ -138,10 +145,12 @@ class BaseOptions():
         else:
             raise ValueError(f'can not find DICOM dir {DICOM_dir}')
 
-        # mc dose shape
+        # mc_dose and net_output shape
         hparam.MCDose_shape = [int(x) for x in hparam.MCDose_shape.split(',')]
+        hparam.MCDose_shape = tuple(hparam.MCDose_shape)
         if hparam.net_output_shape != '': 
             hparam.net_output_shape = [int(x) for x in hparam.net_output_shape.split(',')]
+            hparam.net_output_shape = tuple(hparam.net_output_shape)
 
         # print all params
         #  self.print_options(hparam)

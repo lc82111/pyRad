@@ -47,27 +47,25 @@ class Data():
         
         if 'deposition_file' in hparam:
             self.deposition  = self.get_depositionMatrix()
-            self.max_ray_idx = self.deposition.shape[1]
             cprint('deposition loaded.', 'green')
-        else:
-            assert('max_ray_idx' in hparam)
-            self.max_ray_idx = hparam.max_ray_idx
 
         cprint('parsing valid ray data.', 'green')
-        self.dict_rayBoolMat, self.dict_rayIdxMat, self.num_beams = self._read_rayIdx_mat() 
+        self.dict_rayBoolMat_original, self.dict_bixelShape, self.dict_rayIdxMat_original, self.num_beams = self._read_rayIdx_mat(self.hparam.original_valid_ray_file) 
+        if 'skin_valid_ray_file' in self.hparam:
+            self.dict_rayBoolMat_skin, _, self.dict_rayIdxMat_skin, _ = self._read_rayIdx_mat(self.hparam.skin_valid_ray_file) 
+
         self._set_beamID_rayBeginNum_dict()
         self._set_splitted_depositionMatrix()
 
     def _set_beamID_rayBeginNum_dict(self):
-        '''set dict  {beam_id: (ray_begin_idx, num_rays)}'''
+        '''Return: dict  {beam_id: (ray_begin_idx, num_rays)}.  '''
         self.dict_beamID_ValidRayBeginNum = OrderedBunch()
         begin = 0
-        for beam_id, mask in self.dict_rayBoolMat.items():
+        for beam_id, mask in self.dict_rayBoolMat_skin.items():
             self.dict_beamID_ValidRayBeginNum[beam_id] = [begin, mask.sum()]  # {beam_id: (ray_begin_idx, num_rays)}
             begin += mask.sum()
         pp.pprint(f'beam_id: (ray_begin_idx, num_rays) {self.dict_beamID_ValidRayBeginNum}')
 
-        # check
         num_bixel = 0
         for beam_id, (_, num) in self.dict_beamID_ValidRayBeginNum.items():
             num_bixel += num
@@ -79,16 +77,21 @@ class Data():
         fn_depos = os.path.join(self.hparam.deposition_pickle_file_path, 'deposition.pickle') 
 
         if os.path.isfile(fn_depos):
-            cprint('loading deposition data.', 'green')
+            cprint('loading deposition matrix.', 'green')
             D = unpickle_object(fn_depos) 
         else:
-            cprint('building deposition data from Deposition_Index.txt', 'green')
+            cprint('building deposition matrix from Deposition_Index.txt', 'green')
             D = self._read_deposition_file_and_save_to_pickle_sparse()  # use sparse matrix to store D
 
-        # check shape
+        # check deposition matrix shape
         ptsNum = 0
-        for organName, v in self.organ_info.items():
-            ptsNum += v['Points Number'] 
+        for organName, v in self.allOrganTable.items():
+            if 'neuralDose' in self.hparam.patient_ID or 'skin' in self.hparam.patient_ID:
+                if 'skin' in organName:
+                    ptsNum += float(v['Points Number'])
+            else:
+                if 'skin' not in organName:
+                    ptsNum += float(v['Points Number'])
         assert ptsNum == D.shape[0], f'shape not match: ptsNum={ptsNum}, deposition_matrix shape={D.shape}'
         print(f'deposition_matrix shape={D.shape}')
         return D
@@ -180,7 +183,9 @@ class Data():
     
     def _set_splitted_depositionMatrix(self):
         ''' split depostion matrix, such that a matrix corresponding a beam '''
-        cprint('[warning] remove peripheral_tissue dose grid points from deposition matrix', 'red')
+        if 'neuralDose' not in self.hparam.patient_ID:
+            return
+        cprint('[warning] remove peripheral_tissue dose grid points from splitted deposition matrix', 'red')
         D = self.deposition.tocsr()
         D = D[0:self.get_pointNum_from_organName('ITV_skin')]
         #D = self.deposition.tocsc() # Convert to Compressed Sparse Column format which supports column slice 
@@ -189,10 +194,10 @@ class Data():
             self.dict_beamID_Deps[beam_id] = D[:, begin:begin+num].tocoo() # slice then back to coo format
 
     def _set_paramters_from_csv_table(self):
-        df = pd.read_csv(self.hparam.csv_file, skiprows=1, index_col=0, skip_blank_lines=True)  # duplicated column will be renamed automatically
+        df = pd.read_csv(self.hparam.csv_file, skiprows=1, index_col=0, skip_blank_lines=True)  # duplicated column will be renamed automatically. e.g. ptv ptv.1 ptv.2
 
         # drop nan columns
-        cols = [c for c in df.columns if 'Unnamed' not in c] 
+        cols = [c for c in df.columns if 'Unnamed' not in c]
         df = df[cols]
 
         # drop organ with 0 point num
@@ -202,49 +207,58 @@ class Data():
                 organ_names.append(name)
         df = df.drop(organ_names, axis='columns')
 
-        # drop another organs if skin present
-        is_skin = False
-        nonskin_names, skin_names = [], []
-        for name in df.columns:
-            if 'skin' in name:
-                is_skin = True
-                skin_names.append(name)
-            else:
-                nonskin_names.append(name)
-        if is_skin:
-            self.csv_loss_table = df.drop(skin_names, axis='columns') # this var will be used in loss.py, therefore we should keep the duplicated columns
-            df = df.drop(nonskin_names, axis='columns')
+        # remove breakpoint rows
+        df = df.head(10)
 
-        # drop duplicated columns
-        df = df.loc[:, ~df.columns.str.replace("(\.\d+)$", "").duplicated()]
+        # set up 2 tables 
+        self.allOrganTable    = df.copy()
+        self.uniqueOrganTable = df.copy().loc[:, ~df.columns.str.replace("(\.\d+)$", "").duplicated()]  # drop duplicated names 
+        pd.set_option('display.max_columns', None)
+        cprint('\n csv allOrganTable:', 'green')
+        print(self.allOrganTable)
 
-        # set up dict of organ info
-        self.organ_info = OrderedBunch(df.loc[['Grid Size', 'Points Number']].astype(float).to_dict())
-        for organ_name, v in self.organ_info.copy().items():
-            self.organ_info[organ_name]['Grid Size'] = v['Grid Size']*10.  # cm to mm
-            self.organ_info[organ_name]['Points Number'] = int(v['Points Number'])
-        cprint('following csv info will be used to parsing deposition matrix', 'green')
-        pp.pprint(dict(self.organ_info))
-
-        tmp = self.csv_loss_table.loc[['Grid Size', 'Points Number', 'Hard/Soft', 'Constraint Type', 'Min Dose', 'Max Dose', 'DVH Volume', 'Priority']]
-        cprint('following csv info will be used in loss function', 'green')
-        with pd.option_context('display.max_rows', None, 'display.max_columns', None):
-            print(self.csv_loss_table.head(10))
+        # set up a priority table to be used in parsing RTStruct 
+        nonskin_organs = [name for name in df.columns if 'skin' not in name]  # only consider nonskin organs
+        df = df[nonskin_organs].loc[['Min Dose','Priority']] # only consider min_dose and priority
+        df = df.astype(float)
+        # add a row to indicate ptv or oar
+        ptv_oar = [1 if 'TV' in name else 0 for name in df.columns]
+        ptv_oar = np.array(ptv_oar).reshape(1,-1)
+        names = [name for name in df.columns]
+        tmp = pd.DataFrame(ptv_oar, index=['ptv/oar'], columns=names)
+        df = df.append(tmp)
+        df = df.loc[:, ~df.columns.str.replace("(\.\d+)$", "").duplicated()] # remove deuplicated organ name
+        # sort to identify the overlapped organs and write to dataset dir to verify
+        self.priorityUniqueOrganTable = df.sort_values(by=['Priority', 'ptv/oar', 'Min Dose'], axis='columns', ascending=False)
+        self.priorityUniqueOrganTable.to_csv(self.hparam.csv_file.replace('OrganInfo.csv', 'sorted_organs.csv'))
+        cprint('\n following organ order will be used to parse RTStruct:', 'green')
+        print(self.priorityUniqueOrganTable)
 
     def get_organName_from_pointNum(self, pointsNum):
-        for organName, v in self.organ_info.items():
+        # check duplicated pointsNum
+        nb_organ = 0 
+        for organName, v in self.allOrganTable.items(): # iter over columns
+            if v['Points Number'] == pointsNum:
+               nb_organ += 1 
+        if nb_organ == 0:
+            raise ValueError(f'Can not find organ name with pointNum={pointsNum}')
+        if nb_organ > 1:
+            raise ValueError(f'{pointsNum} corresponding multiple oragns') 
+
+        # check passed. return organ name 
+        for organName, v in self.allOrganTable.items(): # iter over columns
             if v['Points Number'] == pointsNum:
                 return organName
-        raise ValueError(f'Can not find organ name with pointNum={pointsNum}')
 
     def get_pointNum_from_organName(self, organ_name):
-        if organ_name not in self.organ_info:
-            raise ValueError(f'Can not find organ name in OrganInfo.csv')
-        return self.organ_info[organ_name]['Points Number']
+        if organ_name not in self.allOrganTable:
+            raise ValueError(f'Can not find organ name {organ_name} in OrganInfo.csv')
+        pointsNum = self.allOrganTable[organ_name]['Points Number']
+        return int(pointsNum) 
 
-    def _read_rayIdx_mat(self):
+    def _read_rayIdx_mat(self, valid_ray_file):
         # get bool matrixes, where 1 indicates the present of ray
-        with open(self.hparam.valid_ray_file, "r") as f:
+        with open(valid_ray_file, "r") as f:
             dict_rayBoolMat = collections.OrderedDict() 
             beam_id = 0
             for line in f:
@@ -258,25 +272,31 @@ class Data():
         
         # convert (list of 1D arrays) to (2D matrix)
         ray_num = 0
+        dict_bixelShape = OrderedBunch()
         for beam_id, FM in dict_rayBoolMat.copy().items():
             FM = np.asarray(FM, dtype=np.bool)
             dict_rayBoolMat[beam_id] = FM
+            dict_bixelShape[beam_id] = FM.shape
             ray_num += FM.sum()
-        assert ray_num == self.max_ray_idx
-        assert ray_num == self.deposition.shape[1], f'shape not match: rayNum={ray_num}, deposition_matrix shape={D.shape}'
+        if 'original' in self.hparam.patient_ID:
+            assert ray_num == self.deposition.shape[1], f'shape not match: rayNum={ray_num}, deposition_matrix shape={D.shape}'
+        if 'skin' in valid_ray_file:  # neural dose uses orgianl validRay.txt rather than skin validRay.txt, but deposition matrix is builded with skin validRay.txt, therefore we must disable these assertions
+            assert ray_num == self.deposition.shape[1], f'shape not match: rayNum={ray_num}, deposition_matrix shape={D.shape}'
 
         # convert 1 in bool matrixes to ray idx
         dict_rayIdxMat = collections.OrderedDict()
         ray_idx = -1
         for beam_id, FM in dict_rayBoolMat.items():
-            idx_matrix = np.full_like(FM, self.max_ray_idx, dtype=np.int)  # NOTE: using max_ray_idx to indicate non-valid ray 
+            #  idx_matrix = np.full_like(FM, self.max_ray_idx, dtype=np.int)  # NOTE: using max_ray_idx to indicate non-valid ray
+            idx_matrix = np.full_like(FM, -1, dtype=np.int)  # NOTE: using -1 to indicate non-valid ray
             for row in range(FM.shape[0]):
                 for col in range(FM.shape[1]):
                     if FM[row, col] == 1:
                         ray_idx += 1
                         idx_matrix[row, col] = ray_idx
             dict_rayIdxMat[beam_id] = idx_matrix
-        return dict_rayBoolMat, dict_rayIdxMat, num_beams
+
+        return dict_rayBoolMat, dict_bixelShape, dict_rayIdxMat, num_beams
 
     def project_to_fluenceMaps(self, fluenceVector):
         '''Convert 1D fluenceVector to 2D fluenceMap
@@ -297,9 +317,10 @@ class Data():
             return: {beam_id: fluenceMap with the shape of (H,W)}
         ''' 
         # set up a tmp with shape:(#bixels+1, ) and tmp[#bixels+1]=0; 
-        tmp = torch.cat([fluence, torch.tensor([0.,], dtype=torch.float32, device=fluence.device)]) # shape:(max_ray_idx, ); tmp[max_ray_idx]=0
+        tmp = torch.cat([fluence, torch.tensor([0.,], dtype=torch.float32, device=fluence.device)]) # shape:(max_ray_idx, ); tmp[max_ray_idx or -1]=0
         dict_FluenceMap = collections.OrderedDict()
         for beam_id, ray_idx in self.dict_rayIdxMat.items():
+            pdb.set_trace()
             dict_FluenceMap[beam_id] = tmp[ray_idx]
         return dict_FluenceMap
 
@@ -332,39 +353,15 @@ class Data():
 
     def _get_organ_3D_index(self):
         '''
-        Return: self.organ_masks {organ_name: bool mask (z=167, x=512, y=512)}
+        Return: self.organ_masks {organ_name: ndarray bool mask (D,H,W) == net_output_shape}
         '''
-        ## get organ priorities from csv file
-        df = self.csv_loss_table
-
-        # only consider min_dose and priority
-        df = df.loc[['Min Dose','Priority']]
-
-        # string to float
-        df = df.astype(float)
-
-        # add a row to indentify ptv/oar
-        ptv_oar = [1 if 'TV' in name else 0 for name in df.columns]
-        ptv_oar = np.array(ptv_oar).reshape(1,-1)
-        names = [name for name in df.columns]
-        df2 = pd.DataFrame(ptv_oar, index=['ptv/oar'], columns=names)
-        df = df.append(df2)
-        df = df.loc[:, ~df.columns.str.replace("(\.\d+)$", "").duplicated()] # remove deuplicated organ name
-
-        # sort to identify the overlapped organs and write to dataset dir to verify
-        sorted_df = df.sort_values(by=['Priority', 'ptv/oar', 'Min Dose'], axis='columns', ascending=False)
-        sorted_df.to_csv(self.hparam.csv_file.replace('OrganInfo.csv', 'sorted_organs.csv'))
-        cprint('following organ order will be used to parse RTStruct', 'green')
-        print(sorted_df)
-       
         ## get contour from dicom
-
         # ensure all organ_names in csv appeared in RTStruct
         Dicom_Reader = Dicom_to_Imagestack(get_images_mask=True, arg_max=True)  # arg_max is important to get the right order for overlapped organs.
         Dicom_Reader.Make_Contour_From_directory(self.hparam.CT_RTStruct_dir)
         roi_names = []
         is_rtstruct_complete = True
-        for name in sorted_df.columns:
+        for name in self.priorityUniqueOrganTable.columns:
             if name not in Dicom_Reader.all_rois:
                 cprint(f'Warning: {name} not in RTStruct! we simply skip it.', 'red')
                 is_rtstruct_complete == False
@@ -378,23 +375,23 @@ class Data():
         Dicom_Reader.set_contour_names(roi_names)
         Dicom_Reader.Make_Contour_From_directory(self.hparam.CT_RTStruct_dir)
         
-        # match MonteCarlo dose's shape 
+        # match MonteCarlo dose shape 
         if Dicom_Reader.mask.shape != self.hparam.MCDose_shape:
-            cprint(f'\nresize contour {Dicom_Reader.mask.shape} to match MC shape {self.hparam.MCDose_shape}', 'yellow')
+            cprint(f'\nresize RTStruct {Dicom_Reader.mask.shape} to match MC shape {self.hparam.MCDose_shape}', 'yellow')
             Dicom_Reader.mask = resize(Dicom_Reader.mask, self.hparam.MCDose_shape, order=0, mode='constant', cval=0, clip=False, preserve_range=True, anti_aliasing=False).astype(np.uint8)
 
         # match network output shape
         if self.hparam.net_output_shape != '':
             if Dicom_Reader.mask.shape[0] != self.hparam.net_output_shape[0]: 
-                cprint(f'resize and crop contour {Dicom_Reader.mask.shape} to match network output shape {self.hparam.net_output_shape}', 'yellow')
+                cprint(f'resize and crop RTStruct {Dicom_Reader.mask.shape} to match network output shape {self.hparam.net_output_shape}', 'yellow')
                 Dicom_Reader.mask = resize(Dicom_Reader.mask, (self.hparam.net_output_shape[0],)+Dicom_Reader.mask.shape[1:], \
                                            order=0, mode='constant', cval=0, clip=False, preserve_range=True, anti_aliasing=False).astype(np.uint8)
                 crop_top  = int((self.hparam.MCDose_shape[1]-self.hparam.net_output_shape[1] + 1) * 0.5)
                 crop_left = int((self.hparam.MCDose_shape[2]-self.hparam.net_output_shape[2] + 1) * 0.5)
                 Dicom_Reader.mask = Dicom_Reader.mask[:, crop_top:crop_top+self.hparam.net_output_shape[1], crop_left:crop_left+self.hparam.net_output_shape[2]]
 
-        cprint(f'shape of contour label volume = {Dicom_Reader.mask.shape}', 'green')
-        cprint(f'max label in contour label volume = {Dicom_Reader.mask.max()}', 'green')
+        cprint(f'shape of RTStruct mask = {Dicom_Reader.mask.shape}', 'green')
+        cprint(f'max label in RTStruct mask  = {Dicom_Reader.mask.max()}', 'green')
 
         # label mask -> bool mask
         self.organ_masks = OrderedBunch()
@@ -408,7 +405,7 @@ class Data():
         self.Dicom_Reader = Dicom_Reader
 
         debug = False 
-        if debug:  # show overlapped ct
+        if debug:  # show struct overlap ct
             pdb.set_trace() 
             os.environ['SITK_SHOW_COMMAND'] = '/home/congliu/Downloads/Slicer-4.10.2-linux-amd64/Slicer'
             dicom_handle = Dicom_Reader.dicom_handle
@@ -451,7 +448,7 @@ class Geometry():
         self.plan = OrderedBunch({'isocenter': beam_info[1].IsoCenter, 
                                   'beam_numbers': len(beam_info),
                                   'beam_info': beam_info,
-                                 })
+                                  'target_prescription_dose': data.Dicom_Reader.target_prescription_dose})
 
     def get_isoCenter_in_pixelCoordinates256x256(self):
         spacing = self.CT.spacing * 2    # [2.34375, 2.34375, 5]mm@256x256x63
@@ -462,8 +459,9 @@ class Geometry():
         cprint(f'pixel_isocenter={pixel_isocenter}', 'green')
 
     def set_doseGrid(self, data):
-        gs = data.organ_info['ITV_skin']['Grid Size']
-        doseGrid_spacing = np.array([gs, gs, 2.5]) # juyao give 2.5 to me
+        gs = data.allOrganTable['ITV_skin']['Grid Size'] 
+        gs = float(gs) * 10  # cm -> mm
+        doseGrid_spacing = np.array([gs, gs, 2.5]) # juyao give 2.5 to me in mm
         cprint(f'using juyao given z spacing 2.5 !','red')
         self.doseGrid = OrderedBunch({'spacing': doseGrid_spacing,
                                       'size': (self.CT.size * self.CT.spacing / doseGrid_spacing).astype(np.int),

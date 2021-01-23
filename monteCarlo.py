@@ -2,24 +2,26 @@
 # -*- coding: utf-8 -*-
 
 import os, pdb, glob, re, unittest, shutil, pickle
+from pathlib import Path
 from argparse import ArgumentParser, Namespace
 from orderedbunch import OrderedBunch
 from multiprocessing import Process, Manager
 from termcolor import colored, cprint
-from data import Data
 from orderedbunch import OrderedBunch
 import numpy as np
-from socket import *
-
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from matplotlib import cm
 from matplotlib import rc
+from skimage.transform import resize, rotate 
 
 import torch
+import torchvision.transforms as transforms
 from torch.utils.tensorboard import SummaryWriter
+
 from loss import Loss
 from utils import *
+from data import Data
 
 
 class MonteCarlo():
@@ -38,7 +40,7 @@ class MonteCarlo():
     def get_random_apertures(self, nb_apertures=1000):
         ''' generate random apertures for deep learning training set. 
             Arguments: nb_apertures we will generate this number random apertures
-            Return: self.dict_randomApertures {beam_id: ndarray(nb_apertures, H, W)} '''
+            Return: self.dict_randomApertures {beam_id: ndarray(nb_apertures, h, w)} '''
         def get_random_shape(H,W):
             if np.random.randint(0,2):
                 img = random_shapes((H, W), max_shapes=3, multichannel=False, min_size=min(H,W)//3, allow_overlap=True, intensity_range=(1,1))[0]
@@ -61,7 +63,7 @@ class MonteCarlo():
 
         self.dict_randomApertures = OrderedBunch() 
         for beam_id in range(1, self.nb_beams+1):  # for each beam
-            H, W = self.data.dict_rayBoolMat[beam_id].shape
+            H, W = self.data.dict_bixelShape[beam_id]
             self.dict_randomApertures[beam_id] = np.zeros((self.nb_apertures, H, W), np.uint8)  # default closed apertures
             for i, apt in enumerate(self.dict_randomApertures[beam_id]):  # for each apterture 
                 if i==0:   # skip first aperture for each beam to get a all-leaf-opened aperture
@@ -134,7 +136,7 @@ class MonteCarlo():
 
         for beam_id, seg in enumerate(seg_files):
             beam_id += 1
-            H, W = self.data.dict_rayBoolMat[beam_id].shape
+            H, W = self.data.dict_bixelShape[beam_id]
             #  print(f'beam_ID:{beam_id}; file_name:{seg}')
             with open(seg, 'r') as f:
                 lines = f.readlines()
@@ -169,13 +171,14 @@ class MonteCarlo():
             #  print(f'{self.dict_inJaw[beam_id].sum()}')
             assert self.dict_inJaw[beam_id].sum() == H, f'H={H}, inJaw={self.dict_inJaw[beam_id].sum()}'
 
-    def _get_x_axis_position(self, flag):
-        '''get x axis positions from optimized_segments_MUs_file or self.dict_randomApertures.
+    def _get_x_axis_position(self, dict_segments):
+        '''get x axis positions 
          Arguments: 
-            flag: randomApertures|optimized_segments_MUs
+            dict_segments: {beam_id, (#apertures, h, w)}
          Return: 
+            self.nb_apertures: int
             self.dict_lrs {beam_id: strings (#aperture, 51)}, NOTE: 51 leaf pairs in reversed order. '''
-        self.dict_lrs = OrderedBunch()  # {beam_id: (#aperture, H)}
+        self.dict_lrs = OrderedBunch()  # {beam_id: (#aperture, 51)}
 
         def get_leafPos_for_a_row(row):
             '''
@@ -185,6 +188,7 @@ class MonteCarlo():
             if (row==0).all():  # closed row
                 lr = default_lr; first,last=0,0 
             else: # opened row
+                assert len(np.nonzero(row)[0]) == 2, 'Error: isolate 1 or multiple 1 regions'
                 first, last = np.nonzero(row)[0][[0,-1]]  # get first 1 and last 1 positions
                 #  last += 1 # block the left bixel of first 1, and right bixel of last 1; TODO +1?
                 l = jaw_x1 + first*self.x_spacing # spacing 0.5mm
@@ -193,56 +197,23 @@ class MonteCarlo():
             #  cprint(f'row:{row_idx}; {first}  {last};  {lr}', 'green')
             return lr
 
-        if flag == 'randomApertures':
-            for beam_id, apts in self.dict_randomApertures.items():  # 0. for each beam
-                #  print(f'\n beam_id:{beam_id}')
-                H, W = self.data.dict_rayBoolMat[beam_id].shape
-                #  print(f'height:{H}; width:{W}')
-
-                pos = self.dict_jawsPos[beam_id].x1-self.x_spacing  # leaf closed at jaw_x1-0.5 by default 
-                default_lr = '{:.2f} {:.2f}\n'.format(pos, pos)  # by default, leaves closed 
-                self.dict_lrs[beam_id] = np.full((self.nb_apertures, self.nb_leafPairs), default_lr, dtype=object)  # (#aperture, 51), 
-                for a in range(self.nb_apertures):   # 1. for each aperture
-                    row_idx = 0
-                    for i in range(self.nb_leafPairs): # 2. for each row
-                        if self.dict_inJaw[beam_id][i]:
-                            lr = get_leafPos_for_a_row(apts[a, row_idx])
-                            self.dict_lrs[beam_id][a, i] = lr
-                            row_idx += 1
-                    self.dict_lrs[beam_id][a] = self.dict_lrs[beam_id][a, ::-1]  # NOTE: In TPS, 51 leaf pairs are in reversed order. 
-
-        elif flag == 'optimized_segments_MUs':
-            file_name = os.path.join(self.hparam.optimized_segments_MUs_file, 'optimized_segments_MUs.pickle')
-            with open(file_name, 'rb') as f:
-                self.segs_mus = pickle.load(f)
-            self.nb_apertures = len(self.segs_mus[1]['MU']) 
-            self.old_MUs      = np.empty((self.nb_beams*self.nb_apertures, 1, 1, 1), dtype=np.float32)
-            assert self.nb_beams == len(self.segs_mus)
-
-            for beam_id, seg_mu in self.segs_mus.items():  # 0. for each beam
-                #  print(f'\n beam_id:{beam_id}')
-                H, W = self.data.dict_rayBoolMat[beam_id].shape
-                #  print(f'height:{H}; width:{W}')
-                segs, mus = seg_mu['Seg'], seg_mu['MU']
-                self.old_MUs[(beam_id-1)*self.nb_apertures: (beam_id-1)*self.nb_apertures+self.nb_apertures] = mus.reshape((self.nb_apertures,1,1,1)) 
-
-                pos = self.dict_jawsPos[beam_id].x1-self.x_spacing  # leaf closed at jaw_x1-0.5 by default 
-                default_lr = '{:.2f} {:.2f}\n'.format(pos, pos)  # by default, leaves closed 
-                self.dict_lrs[beam_id] = np.full((self.nb_apertures, self.nb_leafPairs), default_lr, dtype=object)  # (#aperture, 51), 
-                for aperture in range(self.nb_apertures):   # 1. for each aperture
-                    seg = segs[:, aperture]
-                    seg = seg.reshape(H,W)
-                    row_idx = 0
-                    for i in range(self.nb_leafPairs): # 2. for each row
-                        if self.dict_inJaw[beam_id][i]:
-                            lr = get_leafPos_for_a_row(seg[row_idx])
-                            self.dict_lrs[beam_id][aperture, i] = lr
-                            row_idx += 1
-                    self.dict_lrs[beam_id][aperture] = self.dict_lrs[beam_id][aperture, ::-1]  # NOTE: In TPS, 51 leaf pairs are in reversed order. 
+        self.nb_apertures = dict_segments[1].shape[0]
+        for beam_id, segs in dict_segments.items():  # 0. for each beam
+            pos = self.dict_jawsPos[beam_id].x1-self.x_spacing  # leaf closed at jaw_x1-0.5 by default 
+            default_lr = '{:.2f} {:.2f}\n'.format(pos, pos)  # by default, leaves closed 
+            self.dict_lrs[beam_id] = np.full((self.nb_apertures, self.nb_leafPairs), default_lr, dtype=object)  # (#aperture, 51), 
+            for i in range(self.nb_apertures):   # 1. for each aperture
+                row_idx = 0  # 3. row index in jaw, segment only has rows in jaw
+                for j in range(self.nb_leafPairs): # 2. for each row of 51 leaves 
+                    if self.dict_inJaw[beam_id][j]:
+                        lr = get_leafPos_for_a_row(segs[i, row_idx])
+                        self.dict_lrs[beam_id][i, j] = lr
+                        row_idx += 1
+                self.dict_lrs[beam_id][i] = self.dict_lrs[beam_id][i, ::-1]  # NOTE: In TPS, 51 leaf pairs are in reversed order. 
 
     def write_to_seg_txt(self, seg_dir='Segs'):
         """
-        Write seg*.txt to the shared disk of windowsServer
+        Write Seg_{beam_id}_{aperture_id}.txt to the Segs dir on the shared disk of windowsServer
         Args: 
             self.dict_lrs {beam_id: strings (#aperture, 51)}, NOTE: 51 leaf pairs in reversed order.
             self.nb_apertures
@@ -251,7 +222,6 @@ class MonteCarlo():
         Outputs:
             seg*.txt on windowsServer 
         """
-        ## write Seg_{beam_id}_{aperture_id}.txt 
         cprint(f'write {self.nb_beams*self.nb_apertures} Seg*.txt files to {self.hparam.winServer_MonteCarloDir}/{seg_dir}.', 'green')
         for beam_id in range(1, self.nb_beams+1):
             seg_template = os.path.join(self.hparam.winServer_MonteCarloDir, 'templates', f'Seg_beamID{beam_id}.txt')
@@ -282,50 +252,43 @@ class MonteCarlo():
                 dose += data
         return dose * numberOfFractions
 
-    def cal_unit_MCdose_on_windows(self, flag):
+    def cal_unit_MCdose_on_winServer(self, dict_segments):
         ''' call FM.exe and gDPM.exe on windowsServer. 
         Arguments:
-            flag: randomApertures|optimized_segments_MUs
+            dict_segments: {beam_id, (#apertures, h, w)}
         Return: 
             unitMUDose, ndarray (nb_beams*nb_apertures, #slice, H, W)  '''
-        self._get_x_axis_position(flag)  # get x axis position from the saved random generated fluences
+        self._get_x_axis_position(dict_segments)  # get x axis position from the saved random generated fluences
         self.write_to_seg_txt(seg_dir='Segs')
 
         cprint(f'compute unit MU Dose on winServer and save results to {self.hparam.winServer_MonteCarloDir}', 'green')
         pdb.set_trace()
-        call_FM_gDPM_on_windowsServer(self.hparam.patient_ID, self.nb_beams, self.nb_apertures, hparam.winServer_nb_threads)
+        call_FM_gDPM_on_windowsServer(self.hparam.patient_ID, self.nb_beams, self.nb_apertures, self.hparam.winServer_nb_threads)
         pdb.set_trace()
 
-    def get_unit_MCdose(self, uid): 
+    def get_unit_MCdose_from_winServer(self, beam_id, aperture_id): 
         ''' get calculated dose dpm_result_{beam_id}_{aperture_id}Ave.dat from windowsServer.
             Arguments:
-                uid: {beam_id}_{aperture_id}
+                beam_id, aperture_id: int
             Return:
-                mcDose(#slice, H, W) '''
-        dpm_result_path = Path(self.hparam.winServer_MonteCarloDir, 'gDPM_results', f'dpm_result_{uid}Ave.dat')
+                mcDose: ndarray (D, H, W) == MCDose_shape or == net_output_shape
+        '''
+        dpm_result_path = Path(self.hparam.winServer_MonteCarloDir, 'gDPM_results', f'dpm_result_{beam_id}_{aperture_id}Ave.dat')
         cprint(f'read monteCarlo unit dose from {dpm_result_path}', 'green')
         with open(dpm_result_path, 'rb') as f:
             dose = np.fromfile(f, dtype=np.float32)
-            dose = dose.reshape(*hparam.MCDose_shape)
+            dose = dose.reshape(*self.hparam.MCDose_shape)
         mcDose = np.swapaxes(dose, 2, 1)
-        return mcDose
-    
-    def get_all_beams_unit_MCdose(self):
-        ''' Return: unitMUDose, ndarray (nb_beams*nb_apertures, #slice, H, W)  '''
-        pdb.set_trace()
-        if os.path.isfile(self.hparam.unitMUDose_npz_file):
-            cprint(f'load {self.hparam.unitMUDose_npz_file}', 'green')
-            return np.load(self.hparam.unitMUDose_npz_file)['npz']
-        else:
-            if not Path(self.hparam.winServer_MonteCarloDir, 'gDPM_results', 'dpm_result_1_0Ave.data').is_file(): 
-                self.cal_unit_MCdose_on_windows(flag='optimized_segments_MUs')
-            cprint(f'fetching gDPM results from winServer and save them to local disk: {self.hparam.unitMUDose_npz_file}', 'green')
-            unitMUDose = np.empty((self.nb_beams*self.nb_apertures, ) + self.hparam.MCDose_shape, dtype=np.float32)
-            idx = 0
-            for beam_id in range(1, self.nb_beams+1):
-                for aperture_id in range(0, self.nb_apertures):
-                    unitMUDose[idx] = self.get_unit_MCdose(uid=f'{beam_id}_{aperture_id}')
-                    idx += 1
 
-            np.savez(self.hparam.unitMUDose_npz_file, npz=unitMUDose)
-            return unitMUDose
+        D, H, W = self.hparam.MCDose_shape 
+        assert mcDose.shape == (D,H,W)
+         
+        if self.hparam.net_output_shape != '': 
+            mcDose = resize(mcDose, (D//2,H,W), order=3, mode='constant', cval=0, clip=False, preserve_range=True, anti_aliasing=False)
+            mcDose = np.where(mcDose<0, 0, mcDose).astype(np.float32)  # bicubic(order=3) resize may create negative values
+            mcDose = torch.tensor(mcDose, dtype=torch.float32, device=self.hparam.device)
+            mcDose = transforms.CenterCrop(size=(128,128))(mcDose)
+            mcDose = to_np(mcDose)
+            assert mcDose.shape == self.hparam.net_output_shape
+
+        return mcDose

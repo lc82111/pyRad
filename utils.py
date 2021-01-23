@@ -3,6 +3,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 import numpy as np
 import os, copy, pydicom, math, glob
 from orderedbunch import OrderedBunch
+from socket import *
 from scipy.ndimage import median_filter 
 import numpy.random as npr
 from termcolor import cprint
@@ -23,10 +24,8 @@ def get_now_time():
     now = datetime.datetime.now()
     return now.strftime("%Y-%m-%d-%H-%M")
 
-
 def sigmoid(x):
     return 1 / (1 + np.exp(-x))
-
 
 def pickle_object(title, data):
     pikd = open(title, 'wb')
@@ -58,7 +57,8 @@ def del_fold(dir_path):
         print("Warning: %s : %s" % (dir_path, e.strerror))
 
 def split_doses(doses, organ_inf):
-    #assert to_np(torch.isnan(doses)).any() == False
+    assert isinstance(doses, torch.Tensor)
+    assert to_np(torch.isnan(doses)).any() == False
     list_organ_doses = torch.split(doses, list(organ_inf.values()))
     dict_organ_doses = collections.OrderedDict()
 
@@ -68,10 +68,12 @@ def split_doses(doses, organ_inf):
     return dict_organ_doses 
 
 def parse_MonteCarlo_dose(MCDose, data):
-    ''' Return: dict_organ_dose {organ_name: dose ndarray (#organ_dose, )} '''
+    ''' MCDose: tensor (D,H,W)
+        Return: dict_organ_dose {organ_name: dose tensor (#organ_dose, )} '''
+    assert isinstance(MCDose, torch.Tensor)
     dict_organ_dose = OrderedBunch()
     for organ_name, msk in data.organ_masks.items():
-        assert MCDose.shape == msk.shape 
+        assert tuple(MCDose.shape) == msk.shape 
         dict_organ_dose[organ_name] = MCDose[msk]
     return dict_organ_dose 
 
@@ -227,9 +229,8 @@ def convert_depoMatrix_to_tensor(D, device):
             d = torch.sparse_coo_tensor(torch.LongTensor([d.row, d.col]), torch.tensor(d.data), torch.Size(d.shape), dtype=torch.float32, device=device)
             D.update({beam_id: d})
     else: # dense matrix
-        D = torch.tensor(D, dtype=torch.float32, device=self.hparam.device)
+        D = torch.tensor(D, dtype=torch.float32, device=device)
     return D
-
 
 def load_npz(npz_path):
     # npz object can not be access in parallel (i.e., num_workers>0 in torch.dataloader), therefore we setup a new dict to enable parallel.
@@ -389,6 +390,7 @@ class Dicom_to_Imagestack:
 
     def set_isocenter_and_beam_angle(self, rtplan_file):
         ds = pydicom.read_file(rtplan_file, force=True)
+        self.target_prescription_dose = float(ds[0x300a, 0x0010][0][0x300a, 0x0026].value) * 100  # cGray
         self.beam_info = OrderedBunch()
         for i, beam in enumerate(ds.BeamSequence):
             self.beam_info[i+1] = OrderedBunch()

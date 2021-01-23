@@ -12,7 +12,8 @@ def main(hparam):
     cprint(f'using optimized_segments_MUs from file: {fn}', 'green')
 
     for beamid, dict_beam_seg_mu in dict_seg_mu.items():
-        file_write_obj = open(os.path.join(hparam.optimized_segments_MUs_file_path, f'{beamid}.txt'), 'w')
+        save_path = os.path.join(hparam.optimized_segments_MUs_file_path, f'{beamid}.txt')
+        file_write_obj = open(save_path, 'w')
         seg, mu = dict_beam_seg_mu['Seg'], dict_beam_seg_mu['MU']
         high, width = data.dict_rayBoolMat[beamid].shape
         cprint(f'beam_id={beamid}', 'green')
@@ -42,6 +43,7 @@ def main(hparam):
             # pdb.set_trace()
             # print(seg_2d.shape)
         file_write_obj.close()
+        cprint(f'{save_path} saved.')
 
 if __name__ == "__main__":
     hparam = BaseOptions().parse()

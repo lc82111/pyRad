@@ -27,10 +27,11 @@ from data import Data
 from loss import Loss
 #  from sp import sp_solvers
 from options import BaseOptions
-from generate_trainingset import PencilBeam
+from neural_dose import PencilBeam
 from neuralDose.net.Unet3D import UNet3D 
 from neuralDose.data.datamodule import Transform 
 from neuralDose.utils import MyModelCheckpoint
+from neural_dose import NeuralDose
 
 
 def _smallest_contiguous_sum_2d(grad_map):
@@ -63,6 +64,7 @@ def _smallest_contiguous_sum_2d(grad_map):
     row_segs, lrs = [], []
     for row in grad_map:
         seg, lr = _smallest_contiguous_sum(row)
+        assert len(np.nonzero(seg)[0]) == 2, 'Error: isolate 1 or multiple 1 regions'
         row_segs.append(seg)
         lrs.append(lr)
     segment  = np.concatenate(row_segs, axis=0) # a long flatten bool vector
@@ -84,86 +86,12 @@ class SubProblem():
         cprint('solving SubProblem .............', 'yellow')
         dict_segments, dict_lrs = OrderedBunch(), OrderedBunch()
         for beam_id, grad_map in dict_gradMaps.items():
-            blocked_bixels = ~self.data.dict_rayBoolMat[beam_id] # where 1 indicates non-valid/blocked bixel 
+            blocked_bixels = ~self.data.dict_rayBoolMat_original[beam_id] # where 1 indicates non-valid/blocked bixel 
             grad_map[blocked_bixels] = 10000. # set nonvalid bixels as 10000 to enforce smallest_contiguous_sum() choose the smaller region 
             grad_map = grad_map.astype(np.float64)
             dict_segments[beam_id], dict_lrs[beam_id] = _smallest_contiguous_sum_2d(grad_map)
         cprint('done', 'green')
         return dict_segments, dict_lrs
-
-class NerualDose():
-    def __init__(self, hparam, data):
-        self.hparam = hparam
-        self.data   = data
-        self.net    = self.load_net()
-        self.PB     = PencilBeam(hparam, data)
-        
-        self.dict_deps = convert_depoMatrix_to_tensor(data.dict_beamID_Deps, hparam.device)  # {beam_id: deposition matrix (#doseGrid, #beamBixels)}
-
-        data_dir = Path(hparam.data_dir)
-        CTs = np.load(data_dir.joinpath('CTs.npz'))['CTs']  # 3d ndarray or 4d ndarray of 6 gantry angles
-        self.CTs = torch.tensor(CTs, dtype=torch.float32, device=hparam.device)
-        
-        self.pbmcDoses_opened = []
-        for fn in list(braceexpand(str(data_dir.joinpath('mcpbDose_{1..6}000000.npz')))):  # these npz are generated from the whole-opened leaf pairs
-            self.pbmcDoses_opened.append(load_npz(fn)['mcDose'])  # npz containing multiple keys cannot be accessed in parallel
-
-        self.pbmcDoses_opened = np.stack(self.pbmcDoses_opened, axis=0) # (beam, D, H, W)
-        self.pbmcDoses_opened = torch.tensor(self.pbmcDoses_opened, dtype=torch.float32, device=hparam.device)
-
-        self.transform = Transform(hparam)
-   
-    def get_neuralDose_for_a_beam(self, beam_id, MUs, segs, mask):
-        '''Arguments:
-            MUs: tensor (#apertures,)
-            segs: tensor (hxw, #apertures)
-            mask: tensor bool (h,w); 1 indicates valid ray 
-        '''
-        neuralDose = 0
-        for j in range(segs.shape[-1]): # for each aperture
-            tmp = segs[:,j][mask.flatten()]
-            unitNeuralDose = self.get_neuralDose_for_an_aperture(tmp, beam_id) # 3D unit dose (D,H,W)
-            neuralDose += unitNeuralDose * MUs[j].to('cpu')  # x MU
-        return neuralDose
-
-    def get_neuralDose_for_an_aperture(self, segment, beam_id):
-        ''' segment: bool tensor vector (#doseGrid, )  '''
-        # PencilBeam dose
-        # print(f'{self.dict_deps[beam_id].shape}----{segment.shape}')
-        pbUnitDose = cal_dose(self.dict_deps[beam_id], segment) # cal unit dose (#dose_grid, )
-        pbUnitDose = pbUnitDose[0:self.data.get_pointNum_from_organName('ITV_skin')]  # only care the dose of skin
-        pbUnitDose = self.PB._parse_dose_torch(pbUnitDose)  # 3D dose 61x256x256
-        pbUnitDose = transforms.CenterCrop(size=(128,128))(pbUnitDose) # (D=61, H=256, W=256) -> (D=61, H=128, W=128)
-
-        # net inputs
-        mcdose_opened = self.pbmcDoses_opened[beam_id-1] # get whole-opened mcdose for the current gantry angle
-        inputs = torch.stack([self.CTs, mcdose_opened, pbUnitDose], dim=0)
-        inputs = self.transform(inputs)
-        inputs = inputs.unsqueeze(0)
-
-        # forward throught net  # with torch.no_grad():
-        with torch.cuda.amp.autocast():
-            unitNeuralDose = self.net(inputs.to('cpu'))
-        unitNeuralDose = torch.relu(unitNeuralDose.squeeze())
-        unitNeuralDose = self.transform.strip_padding_depths(unitNeuralDose)
-        return unitNeuralDose 
-
-    def load_net(self):
-        net = UNet3D(in_channels=3, n_classes=1, norm_type=self.hparam.norm_type)
-        cprint(f'loading neuralDose network from {self.hparam.ckpt_path}', 'green')
-        ckpt = torch.load(self.hparam.ckpt_path, map_location=torch.device(self.hparam.device))
-        state_dict = {}
-        for k, v in ckpt['state_dict'].items(): state_dict[k.replace('net.', '')] = v
-        missing_keys, unexpected_keys = net.load_state_dict(state_dict)
-        cprint('missing_keys', 'green')
-        print(missing_keys)
-        cprint('unexpected_keys', 'green')
-        print(unexpected_keys)
-
-        net.eval()
-        for k, v in net.named_parameters(): v.requires_grad_(False)  # try to save memory
-        net.to('cpu')
-        return net
 
 class MasterProblem():
     def __init__(self, hparam, loss, data, sp):
@@ -184,6 +112,7 @@ class MasterProblem():
 
     def update_segments_lrs(self, new_dict_segments, new_dict_lrs):
         ''' append the new segment vector to the column of old seg matrix
+            append the new lrs to the first axis of the old lrs
         Arguments:new_dict_segments {beam_id: ndarray (HxW,)}
                   new_dict_lrs      {beam_id: ndarray (H, 2)}
         Return: 
@@ -202,7 +131,7 @@ class MasterProblem():
                 
                 # append the new lrs to the first axis of the old lrs
                 if 1 not in self.dict_lrs:  # continue optim from disk file
-                    H, W = self.data.dict_rayBoolMat[beam_id].shape
+                    H, W = self.data.dict_bixelShape[beam_id]
                     old_lrs = restore_lrs(old_seg_mat, H, W)
                 else:  # norm continue optim 
                     old_lrs = self.dict_lrs[beam_id]  # (#aperture, H, 2)
@@ -235,7 +164,7 @@ class Optimization():
         '''
         self.hparam, self.loss, self.data = hparam, loss, data
         self.global_step = 0
-        self.neuralDose = NerualDose(hparam, data)
+        self.neuralDose = NeuralDose(hparam, data)
 
         # create a tensorboard summary writer using the specified folder name.
         if hparam.logs_interval != None:
@@ -259,11 +188,11 @@ class Optimization():
             # compute segment gradient
             neuralDose = 0 # (D,H,W) 
             dict_segments = OrderedBunch()
-            for beam_id, mask in self.data.dict_rayBoolMat.items(): # for each beam
+            for beam_id, mask in self.data.dict_rayBoolMat_skin.items(): # for each beam
                 mask = torch.tensor(mask, dtype=torch.bool, device=self.hparam.device)
-                dict_segments[beam_id] = torch.zeros((mask.shape[0]*mask.shape[1], 1), dtype=torch.float32, device=self.hparam.device, requires_grad=True)  # (#hxw, 1)
-                MUs  = torch.ones((1,1), dtype=torch.float32, device=self.hparam.device, requires_grad=True) # (1,)
-                neuralDose += self.neuralDose.get_neuralDose_for_a_beam(beam_id, MUs, dict_segments[beam_id], mask)
+                dict_segments[beam_id] = torch.zeros((mask.shape[0]*mask.shape[1], 1), dtype=torch.float32, device=self.hparam.device, requires_grad=True)  # (#bixels=hxw, 1)
+                MUs  = torch.ones((1,1), dtype=torch.float32, device=self.hparam.device, requires_grad=True) # (#apertures=1,)
+                neuralDose += self.neuralDose.get_neuralDose_for_a_beam(beam_id, MUs, dict_segments[beam_id], mask, False)
         
         # loss
         dict_organ_doses = parse_MonteCarlo_dose(neuralDose, self.data)
@@ -274,7 +203,7 @@ class Optimization():
 
         # get grad
         loss.backward(retain_graph=False) # backward to get grad
-        dict_gradMaps = get_segment_grad(dict_segments, self.data.dict_rayBoolMat)
+        dict_gradMaps = get_segment_grad(dict_segments, self.data.dict_rayBoolMat_original)
 
         return dict_gradMaps
 
@@ -322,7 +251,7 @@ class Optimization():
         '''
         with torch.no_grad():  # see: https://discuss.pytorch.org/t/layer-weight-vs-weight-data/24271
             for i, lrs in dict_lrs.items(): # each beam i
-                H, W = self.data.dict_rayBoolMat[i].shape
+                H, W = self.data.dict_bixelShape[i]
                 for j, alrs in enumerate(lrs): # each aperture j
                     for k, lr in enumerate(alrs): # each row k
                         l,r = lr; r -= 1  # NOTE: r represents opened rightmost bixel 
@@ -383,12 +312,11 @@ class Optimization():
                                 print(l,r)
                             assert l != r
 
-    def _get_partial_exposure_tensor(self, lrs, seg, rayMat):
+    def _get_partial_exposure_tensor(self, lrs, seg, bixel_shape):
         '''
         Set partial exposed (pe) variable tensors for optimization, and modify the segment elements corresponding the pes. 
         lrs: ndarray (#aperture, H, 2), 2=(l,r)
         seg: ndarray (HxW, #aperture)
-
         NOTE: 
             left/right leaf postion (l,r) will make bixels [ABC] expose.
             [l=0] A B C [r=3] D
@@ -396,7 +324,6 @@ class Optimization():
         return:
             pe: tensor (#aperture, H, 2)
         '''
-        H, W = rayMat.shape
         def get_distinct_lr(l, r):  # let l!=r and l!=r-1, ensure l<=r-2
             if l==r:  # row closed
                 if   l>0:  l -= 1
@@ -407,7 +334,8 @@ class Optimization():
                 elif r<W:  r += 1
                 else: raise NotImplementedError
             return [l, r]
-        
+       
+        H, W = bixel_shape
         # set partial exposure tensor
         pes = torch.full(lrs.shape, fill_value=0., dtype=torch.float32, device=self.hparam.device, requires_grad=True) # sigmoid(0)=0.5
 
@@ -436,7 +364,7 @@ class Optimization():
         dict_MUs, dict_partialExp = OrderedBunch(), OrderedBunch()
         for beam_id, seg in dict_segments.items():
             dict_MUs[beam_id] = torch.rand((seg.shape[1],), dtype=torch.float32, device=self.hparam.device, requires_grad=True) # random [0, 1]
-            dict_partialExp[beam_id], seg = self._get_partial_exposure_tensor(dict_lrs[beam_id], seg, self.data.dict_rayBoolMat[beam_id])
+            dict_partialExp[beam_id], seg = self._get_partial_exposure_tensor(dict_lrs[beam_id], seg, self.data.dict_bixelShape[beam_id])
             dict_segments.update({beam_id: torch.tensor(seg, dtype=torch.float32, device=self.hparam.device, requires_grad=True)})
 
         # optimizer
@@ -477,7 +405,7 @@ class Optimization():
                 self.best_dict_partialExp[beam_id] = to_np(dict_partialExp[beam_id])
                 self.best_dict_lrs[beam_id]        = lrs
             # grad of fluence or segment
-            self.best_dict_gradMap = get_segment_grad(dict_segments, self.data.dict_rayBoolMat)
+            self.best_dict_gradMap = get_segment_grad(dict_segments, self.data.dict_rayBoolMat_original)
 
         # early stop
         if np.round(loss, precision) >= np.round(self.min_loss, precision): self.patience += 1
@@ -486,7 +414,7 @@ class Optimization():
             return True 
         return False
 
-    def _modulate_segment_with_partialExposure(self, segs, pes, lrs, rayMat):
+    def _modulate_segment_with_partialExposure(self, segs, pes, lrs, bixels_shape):
         '''
         Arguments:
             seg: tensor (HxW, #aperture)
@@ -495,8 +423,7 @@ class Optimization():
         Return: 
             modulated_segs (HxW, #aperture)
         '''
-        H, W = rayMat.shape
-
+        H, W = bixels_shape
         pe_3d = []
         for i, alrs in enumerate(lrs):  # for each aperture; 
             pe_2d = []
@@ -527,13 +454,13 @@ class Optimization():
         '''
         neuralDose, dict_fluenceMaps = 0, OrderedBunch()
         #  for beam_id in range(1, len(dict_segments)+1):
-        for beam_id, mask in self.data.dict_rayBoolMat.items(): # for each beam
+        for beam_id, mask in self.data.dict_rayBoolMat_skin.items(): # for each beam
             mask = torch.tensor(mask, dtype=torch.bool, device=self.hparam.device)
             # modulate segment with partial exposure
             pe = torch.sigmoid(dict_partialExp[beam_id])  # [0,1] constraint
-            segs = self._modulate_segment_with_partialExposure(dict_segments[beam_id], pe, dict_lrs[beam_id], self.data.dict_rayBoolMat[beam_id])
+            segs = self._modulate_segment_with_partialExposure(dict_segments[beam_id], pe, dict_lrs[beam_id], bixel_shape=mask.shape)
             MUs = dict_MUs[beam_id]
-            neuralDose += self.neuralDose.get_neuralDose_for_a_beam(beam_id, MUs, segs, mask)
+            neuralDose += self.neuralDose.get_neuralDose_for_a_beam(beam_id, MUs, segs, mask, False)
             with torch.no_grad(): # for visualization
                 fluence = torch.matmul(segs, MUs)  # {beam_id: vector}
                 dict_fluenceMaps[beam_id] = fluence.view(*mask.shape) * mask # select valid rays
@@ -610,9 +537,9 @@ def save_result(mp):
 
     results = OrderedBunch()
     for (beam_id, MU), (_, seg) in zip(mp.dict_MUs.items(), mp.dict_segments.items()):
-        H, W = mp.data.dict_rayBoolMat[beam_id].shape
+        H, W = mp.data.dict_bixelShape[beam_id]
         
-        validRay = mp.data.dict_rayBoolMat[beam_id].flatten().reshape((-1,1)) # where 1 indicates non-valid/blocked bixel 
+        validRay = mp.data.dict_rayBoolMat_original[beam_id].flatten().reshape((-1,1)) # where 1 indicates non-valid/blocked bixel 
         validRay = np.tile(validRay, (1, seg.shape[1]))  # (HxW, #aperture)
         seg = seg*validRay  # partialExp may open bixels in non-valid regions.
 
@@ -632,7 +559,7 @@ def main(hparam):
 
     # init data and loss
     data = Data(hparam)
-    loss = Loss(hparam, data.csv_loss_table, is_warning=False)
+    loss = Loss(hparam, data.allOrganTable, is_warning=False)
 
     # init sub- and master- problem
     sp = SubProblem(hparam, loss, data)

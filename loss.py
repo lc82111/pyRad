@@ -26,11 +26,11 @@ import pickle
 from utils import *
 
 class Loss():
-    def __init__(self, hparam, csv_table, is_warning=True):
+    def __init__(self, hparam, allOrganTable, is_warning=True):
         self.hparam         = hparam
         self.priority_scale = hparam.priority_scale
         self.dose_scale     = hparam.dose_scale
-        self.csv_table      = csv_table 
+        self.allOrganTable  = allOrganTable 
         self.is_warning     = is_warning 
 
     def _dose_window(self, dose, constraint, weight):
@@ -94,20 +94,27 @@ class Loss():
         return loss, breakNum
 
     def loss_func(self, dict_organ_doses, fluence=None, data=None): 
+        ''' Arguments: dict_organ_doses: {organ_name: dose tensor} '''
         total_loss = 0
         dict_breakNUM = collections.OrderedDict()
 
-        for organ_name, constraint in self.csv_table.items():  # iter over columns
-            # skip none organ
+        for organ_name, constraint in self.allOrganTable.items():  # iter over columns
+            # skip zero points organs
             if int(constraint['Points Number']) == 0:
                continue 
+
+            # skip skin related organs
+            if 'skin' in organ_name:
+               if self.is_warning: cprint(f'Warning: skip skin related organ:{organ_name} in allOrganTable', 'red')
+               continue 
+
             # get organ dose
             if organ_name in dict_organ_doses:
                 dose = dict_organ_doses[organ_name] 
-            elif organ_name.rsplit('.')[0] in dict_organ_doses:
+            elif organ_name.rsplit('.')[0] in dict_organ_doses: # conside duplicated organ_name
                 dose = dict_organ_doses[organ_name.rsplit('.')[0]] 
             else:
-                if self.is_warning: cprint(f'Warning: organ {organ_name} find in csv_table but not in dict_organ_doses', 'red')
+                if self.is_warning: cprint(f'Warning: organ {organ_name} find in allOrganTable but not in dict_organ_doses', 'red')
                 continue
                 #raise ValueError
             
