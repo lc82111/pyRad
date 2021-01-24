@@ -21,7 +21,7 @@ python ./pyRad/evaluation.py \
   --ckpt_path './pyRad/neuralDose/lightning_logs/version_2/epoch=499-val_loss=0.00003918.ckpt_interval.ckpt' \
   --norm_type 'GroupNorm' \
   --num_depth 64 \
-  --exp_name 20210114 \
+  --exp_name 20210123 \
   --MCDose_shape 122,256,256 \
   --net_output_shape 61,128,128 \
   --nb_apertures 5 \

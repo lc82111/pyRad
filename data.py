@@ -50,9 +50,10 @@ class Data():
             cprint('deposition loaded.', 'green')
 
         cprint('parsing valid ray data.', 'green')
-        self.dict_rayBoolMat_original, self.dict_bixelShape, self.dict_rayIdxMat_original, self.num_beams = self._read_rayIdx_mat(self.hparam.original_valid_ray_file) 
+        if 'original_valid_ray_file' in self.hparam:
+            self.dict_rayBoolMat_original, self.dict_bixelShape, self.dict_rayIdxMat_original, self.num_beams = self._read_rayIdx_mat(self.hparam.original_valid_ray_file) 
         if 'skin_valid_ray_file' in self.hparam:
-            self.dict_rayBoolMat_skin, _, self.dict_rayIdxMat_skin, _ = self._read_rayIdx_mat(self.hparam.skin_valid_ray_file) 
+            self.dict_rayBoolMat_skin, self.dict_bixelShape, self.dict_rayIdxMat_skin, self.num_beams = self._read_rayIdx_mat(self.hparam.skin_valid_ray_file) 
 
         self._set_beamID_rayBeginNum_dict()
         self._set_splitted_depositionMatrix()
@@ -121,14 +122,15 @@ class Data():
 
         # ensure deposition_Index.txt has all organs in csv and organs should be consistent with the deposition.txt 
         try:
-            if len(self.organ_info.keys()) != len(organName_Dep):
+            if len(self.allOrganTable.columns) != len(organName_Dep):
                 raise ValueError('organ numbers in Dep and CSV not match')
-            for organName_CSV, organName_D in zip(self.organ_info.keys(), organName_Dep):
+            for organName_CSV, organName_D in zip(self.allOrganTable.columns, organName_Dep):
                 if organName_CSV != organName_D:
                     raise ValueError('organ order in Dep and CSV not match')
         except Exception as e:
             print(e)
-            pdb.set_trace() # deposition.txt seems lacking organs in cvs.
+            cprint('[Error] deposition.txt seems lacking organs in cvs.', 'red')
+            pdb.set_trace() 
 
         # unique ray
         ray_list = list(set(ray_list))
@@ -183,15 +185,14 @@ class Data():
     
     def _set_splitted_depositionMatrix(self):
         ''' split depostion matrix, such that a matrix corresponding a beam '''
-        if 'neuralDose' not in self.hparam.patient_ID:
-            return
-        cprint('[warning] remove peripheral_tissue dose grid points from splitted deposition matrix', 'red')
-        D = self.deposition.tocsr()
-        D = D[0:self.get_pointNum_from_organName('ITV_skin')]
-        #D = self.deposition.tocsc() # Convert to Compressed Sparse Column format which supports column slice 
-        self.dict_beamID_Deps = OrderedBunch()
-        for beam_id, (begin, num) in self.dict_beamID_ValidRayBeginNum.items():
-            self.dict_beamID_Deps[beam_id] = D[:, begin:begin+num].tocoo() # slice then back to coo format
+        if 'neuralDose' in self.hparam.patient_ID or 'skin' in self.hparam.patient_ID:
+            cprint('[warning] remove peripheral_tissue dose grid points from splitted deposition matrix', 'red')
+            D = self.deposition.tocsr()
+            D = D[0:self.get_pointNum_from_organName('ITV_skin')]
+            #D = self.deposition.tocsc() # Convert to Compressed Sparse Column format which supports column slice 
+            self.dict_beamID_Deps = OrderedBunch()
+            for beam_id, (begin, num) in self.dict_beamID_ValidRayBeginNum.items():
+                self.dict_beamID_Deps[beam_id] = D[:, begin:begin+num].tocoo() # slice then back to coo format
 
     def _set_paramters_from_csv_table(self):
         df = pd.read_csv(self.hparam.csv_file, skiprows=1, index_col=0, skip_blank_lines=True)  # duplicated column will be renamed automatically. e.g. ptv ptv.1 ptv.2
@@ -238,7 +239,7 @@ class Data():
         # check duplicated pointsNum
         nb_organ = 0 
         for organName, v in self.allOrganTable.items(): # iter over columns
-            if v['Points Number'] == pointsNum:
+            if int(v['Points Number']) == pointsNum:
                nb_organ += 1 
         if nb_organ == 0:
             raise ValueError(f'Can not find organ name with pointNum={pointsNum}')
@@ -247,7 +248,7 @@ class Data():
 
         # check passed. return organ name 
         for organName, v in self.allOrganTable.items(): # iter over columns
-            if v['Points Number'] == pointsNum:
+            if int(v['Points Number']) == pointsNum:
                 return organName
 
     def get_pointNum_from_organName(self, organ_name):
@@ -462,7 +463,7 @@ class Geometry():
         gs = data.allOrganTable['ITV_skin']['Grid Size'] 
         gs = float(gs) * 10  # cm -> mm
         doseGrid_spacing = np.array([gs, gs, 2.5]) # juyao give 2.5 to me in mm
-        cprint(f'using juyao given z spacing 2.5 !','red')
+        cprint(f'juyao given doseGrid z spacing 2.5 ! pls confirm with juyao. ','red')
         self.doseGrid = OrderedBunch({'spacing': doseGrid_spacing,
                                       'size': (self.CT.size * self.CT.spacing / doseGrid_spacing).astype(np.int),
                                       })

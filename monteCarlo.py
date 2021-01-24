@@ -256,7 +256,7 @@ class MonteCarlo():
         Arguments:
             dict_segments: {beam_id, (#apertures, h, w)}
         Return: 
-            unitMUDose, ndarray (nb_beams*nb_apertures, #slice, H, W)  '''
+            unitMUDose, ndarray (nb_beams*nb_apertures, D, H, W)  '''
         self._get_x_axis_position(dict_segments)  # get x axis position from the saved random generated fluences
         self.write_to_seg_txt(seg_dir='Segs')
 
@@ -270,7 +270,7 @@ class MonteCarlo():
             Arguments:
                 beam_id, aperture_id: int
             Return:
-                mcDose: ndarray (D, H, W) == MCDose_shape or == net_output_shape
+                mcDose: ndarray (D=61, H=128, W=128) == net_output_shape
         '''
         dpm_result_path = Path(self.hparam.winServer_MonteCarloDir, 'gDPM_results', f'dpm_result_{beam_id}_{aperture_id}Ave.dat')
         cprint(f'read monteCarlo unit dose from {dpm_result_path}', 'green')
@@ -282,12 +282,11 @@ class MonteCarlo():
         D, H, W = self.hparam.MCDose_shape 
         assert mcDose.shape == (D,H,W)
          
-        if self.hparam.net_output_shape != '': 
-            mcDose = resize(mcDose, (D//2,H,W), order=3, mode='constant', cval=0, clip=False, preserve_range=True, anti_aliasing=False)
-            mcDose = np.where(mcDose<0, 0, mcDose).astype(np.float32)  # bicubic(order=3) resize may create negative values
-            mcDose = torch.tensor(mcDose, dtype=torch.float32, device=self.hparam.device)
-            mcDose = transforms.CenterCrop(size=(128,128))(mcDose)
-            mcDose = to_np(mcDose)
-            assert mcDose.shape == self.hparam.net_output_shape
+        mcDose = resize(mcDose, (D//2,H,W), order=3, mode='constant', cval=0, clip=False, preserve_range=True, anti_aliasing=False)
+        mcDose = np.where(mcDose<0, 0, mcDose).astype(np.float32)  # bicubic(order=3) resize may create negative values
+        mcDose = torch.tensor(mcDose, dtype=torch.float32, device=self.hparam.device)
+        mcDose = transforms.CenterCrop(size=(128,128))(mcDose)
+        mcDose = to_np(mcDose)
+        assert mcDose.shape == self.hparam.net_output_shape
 
         return mcDose

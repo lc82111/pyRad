@@ -545,6 +545,7 @@ def save_result(mp):
         lrs = mp.dict_lrs[beam_id]  # (#aperture, H, 2)
         pes = mp.dict_partialExp[beam_id] # (#aperture, H, 2)
         seg = _modulate_segment_with_partialExposure(seg, lrs, pes)
+        assert_single_connected_components(seg, H, W)
 
         results[beam_id] = {'MU': np.abs(MU), 'Seg': seg, 'lrs':lrs, 'PEs':pes, 'global_step':mp.optim.global_step} 
 

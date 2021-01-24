@@ -5,6 +5,7 @@ import os, copy, pydicom, math, glob
 from orderedbunch import OrderedBunch
 from socket import *
 from scipy.ndimage import median_filter 
+from scipy.ndimage.measurements import label as scipy_label
 import numpy.random as npr
 from termcolor import cprint
 from pydicom.tag import Tag
@@ -19,6 +20,12 @@ from shutil import copyfile
 import sys, collections, shutil, pdb, pickle, datetime
 
 import torch
+
+def assert_single_connected_components(segs, h, w):
+    '''segs: (#bxiels, #aperture)'''
+    for seg in segs.T: # each aperture
+        for row in seg.reshape(h,w):  # each row 
+            assert scipy_label(row)[-1] == 1
 
 def get_now_time():
     now = datetime.datetime.now()
@@ -46,15 +53,16 @@ def make_dir(path):
         os.makedirs(path)
         cprint(f'making new dir {path}', 'yellow')
 
-def cp(src, dst):
-    if not os.path.isfile(dst):
-        copyfile(src, dst)
-
 def del_fold(dir_path):
     try:
+        cprint(f'delete dir {dir_path}', 'yellow')
         shutil.rmtree(dir_path, ignore_errors=True)
     except OSError as e:
         print("Warning: %s : %s" % (dir_path, e.strerror))
+
+def cp(src, dst):
+    if not os.path.isfile(dst):
+        copyfile(src, dst)
 
 def split_doses(doses, organ_inf):
     assert isinstance(doses, torch.Tensor)
@@ -817,8 +825,8 @@ class UIDs():
         return uids
 
 def test_plot(uid, CTs, mcDose, pbDose):
-    time = get_now_time()
-    make_dir(f'test/{time}')
+    save_path = f'/tmp/{get_now_time()}' 
+    make_dir(save_path)
     for i, (ct, md, pd) in enumerate(zip(CTs, mcDose, pbDose)): 
         figs, axes = plt.subplots(1, 2, figsize=(2*10, 1*10))
         figs.set_tight_layout(True)
@@ -832,10 +840,9 @@ def test_plot(uid, CTs, mcDose, pbDose):
         add_colorbar(figs, axes[1], _)
 
         #  plt.show()
-        plt.savefig(f'test/{time}/{uid}_slice{i}_{md.max()}.png')
-        print(f'save test images: test/{time}/{uid}_slice{i}_{md.max()}.png')
+        plt.savefig(f'{save_path}/slice{i}_{md.max()}.png')
         plt.close()
-    print('plot done')
+    cprint(f'a sample of pencilbeam and mc doses has been saved to {save_path} for you visually check.', 'yellow')
 
 def test_plot_bak(beam_id, CTs, mcDose, pbDose, dose_grid):
     '''dose_grid: (#grid_points, 3=(x,y,z)) @ 126x512x512'''

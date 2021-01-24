@@ -34,6 +34,7 @@ class PencilBeam():
     def __init__(self, hparam, data, roi_skinName='ITV_skin'):
         self.hparam = hparam
         self.roi_skinName = roi_skinName 
+        cprint(f'using skin name {roi_skinName} to parsing PointsPosition.txt; pls confirm the skin name is right', 'red')
         self.data = data
         self.geometry = Geometry(data)
         self.dict_randomApertures = None
@@ -43,6 +44,9 @@ class PencilBeam():
 
         # set corner of maximum skine rect
         self._set_skin_coords()
+
+        # {beam_id: deposition matrix (#doseGrid, #beamBixels)}
+        self.dict_deps = convert_depoMatrix_to_tensor(self.data.dict_beamID_Deps, hparam.device)
         
     def _load_randApert(self):
         if self.dict_randomApertures == None:
@@ -71,7 +75,7 @@ class PencilBeam():
         # get begin and end lines in pointsPosition.txt for roi_skin
         begin, end = np.inf, np.inf
         for i, line in enumerate(lines):
-            if self.roi_skinName in line: 
+            if self.roi_skinName in line or self.roi_skinName.replace('skin', 'SKIN') in line: 
                 begin = i+1
             if i>=begin and ':' in line: # another organ 
                 end = i
@@ -103,7 +107,7 @@ class PencilBeam():
 
     def _parse_dose_torch(self, vector_dose):
         ''' turn 1D dose to 3D and interp the 3D dose
-        return: 3D dose (1, 1, #slice, H=256, W=256) '''
+        return: 3D dose (1, 1, D//2, H=256, W=256) '''
         D, H, W = self.hparam.MCDose_shape 
         doseGrid_shape = self.geometry.doseGrid.size.tolist()[::-1]
         dose = torch.zeros(doseGrid_shape, dtype=torch.float32, device=self.hparam.device)  # 3D dose @ doseGrid size
@@ -134,14 +138,26 @@ class PencilBeam():
         pbDose = np.squeeze(pbDose).astype(np.float32)
         return pbDose
 
+    def get_unit_pencilBeamDose(self, beam_id, segment):
+        ''' 
+        Arguments: 
+            beam_id: int
+            segment: ndarray (#validBixels==hxw, )
+        Return:
+            pbDose: tensor (D=61, H=128, W=128) 
+        '''
+        pbDose = cal_dose(self.dict_deps[beam_id], segment) # cal unit dose (#dose_grid, )
+        pbDose = pbDose[0:self.data.get_pointNum_from_organName('ITV_skin')]  # only consider the skin dose
+        pbDose = self._parse_dose_torch(pbDose)  # 3D dose tensor 61x256x256
+        pbDose = transforms.CenterCrop(128)(pbDose)  # 61x128x128
+        return pbDose
+
 class NeuralDose():
     def __init__(self, hparam, data):
         self.hparam = hparam
         self.data   = data
         self.net    = self.load_net()
         self.PB     = PencilBeam(hparam, data)
-        
-        self.dict_deps = convert_depoMatrix_to_tensor(data.dict_beamID_Deps, hparam.device)  # {beam_id: deposition matrix (#doseGrid, #beamBixels)}
 
         data_dir = Path(hparam.data_dir)
         CTs = np.load(data_dir.joinpath('CTs.npz'))['CTs']  # 3d ndarray (D,H,W) or 4d ndarray (#beam,D,H,W)
@@ -203,22 +219,22 @@ class NeuralDose():
         '''
         # PencilBeam dose
         # print(f'{self.dict_deps[beam_id].shape}----{segment.shape}')
-        unitPBDose = cal_dose(self.dict_deps[beam_id], segment) # cal unit dose (#dose_grid, )
-        unitPBDose = unitPBDose[0:self.data.get_pointNum_from_organName('ITV_skin')]  # only consider the skin dose
-        unitPBDose = self.PB._parse_dose_torch(unitPBDose)  # 3D dose 61x256x256
-        unitPBDose = transforms.CenterCrop(size=(128,128))(unitPBDose) # (D=61, H=256, W=256) -> (D=61, H=128, W=128)
+        #  unitPBDose = cal_dose(self.dict_deps[beam_id], segment) # cal unit dose (#dose_grid, )
+        #  unitPBDose = unitPBDose[0:self.data.get_pointNum_from_organName('ITV_skin')]  # only consider the skin dose
+        #  unitPBDose = self.PB._parse_dose_torch(unitPBDose)  # 3D dose 61x256x256
+        unitPBDose = self.PB.get_unit_pencilBeamDose(beam_id, segment)  # 3D dose 61x128x128
 
         # net inputs
         mcdose_opened = self.pbmcDoses_opened[beam_id-1] # get whole-opened mcdose for the current gantry angle
         inputs = torch.stack([self.CTs, mcdose_opened, unitPBDose], dim=0)
-        inputs = self.transform(inputs)
-        inputs = inputs.unsqueeze(0)
+        inputs = self.transform(inputs) # D=64,H,W
+        inputs = inputs.unsqueeze(0)  # B=1,D=64,H,w
 
         # forward throught net  # with torch.no_grad():
         with torch.cuda.amp.autocast():
             unitNeuralDose = self.net(inputs.to('cpu'))
         unitNeuralDose = torch.relu(unitNeuralDose.squeeze())
-        unitNeuralDose = self.transform.strip_padding_depths(unitNeuralDose)
+        unitNeuralDose = self.transform.strip_padding_depths(unitNeuralDose) # 1,61,128,128
         return unitNeuralDose, unitPBDose.detach() 
 
     def load_net(self):

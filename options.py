@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import argparse, os, pdb, glob
+from termcolor import colored, cprint
 from argparse import ArgumentParser, Namespace
 from pathlib import Path
 from orderedbunch import OrderedBunch
@@ -23,7 +24,7 @@ class BaseOptions():
         parser.add_argument('--priority_scale', default=1/100, type=float, help='')
         parser.add_argument('--max_fluence', default=5, type=int, help='max fluence; used to constraint fluence value in fluence optim and plot fluence map.')
         parser.add_argument("--is_check_ray_idx_order", action='store_true', help='')
-        parser.add_argument('--MCDose_shape', default='', required=True, type=str, help='to be consistent with gDPM.exe which uses this shape to process dicom.')
+        parser.add_argument('--MCDose_shape', default='', required=True, type=str, help='this should consistent with gDPM.exe which uses this to process dicom.')
         parser.add_argument('--dense_deposition_matrix', action="store_true", help='not use sparse matrix to store deposition matrix')
 
         # optimization parameters
@@ -41,8 +42,8 @@ class BaseOptions():
         parser.add_argument('--smooth_weight', default=0.2, type=float, help=' fluence smooth regularization weight in fluence optim')
 
          # Monte Carlo parameters 
-        parser.add_argument("--Calculate_MC_unit_doses", action='store_true', help='if true, running FM.exe and gDPM.exe on winServer')
         parser.add_argument('--winServer_nb_threads', default=12, type=int, help='number of threads used for gDPM.exe. Too many threads may overflow the GPU memory')
+        parser.add_argument('--nb_randomApertures', default=500, type=int, help='the number of random apertures for a beam angle')
         parser.add_argument('--test_pbmcDoses', action="store_true", help='if true, plot generated pencilbeam and mc doses')
         parser.add_argument('--test_mcDose', action="store_true", help='if true, plot mc doses')
         parser.add_argument('--mcpbDose2npz', action="store_true", help='if true, calculate and save the pencilbeam mc doses to npz files.')
@@ -69,7 +70,6 @@ class BaseOptions():
         parser.add_argument('--consider_organs', nargs='+', help='only consider these organs')
         parser.add_argument('--CGDeposPlan_doseScale', default=1.0, type=float, help='dose scale for column gen depos plan')
         parser.add_argument('--cal_gamma', action="store_true")
-        parser.add_argument('--gamma_organ', default='skin', type=str, help='only consider this organ')
 
         self.parser = parser
 
@@ -113,7 +113,7 @@ class BaseOptions():
 
         self.parser.add_argument('--deposition_pickle_file_path', default='/mnt/ssd/tps_optimization/'+patient_dir, type=str, help='parsed deposition matrix will be stored in this file')
         self.parser.add_argument('--tensorboard_log', default=patient_dir+'/logs/'+hparam.exp_name, type=str, help='tensorboard directory')
-        self.parser.add_argument('--unitMUDose_npz_file', default=patient_dir+'/dataset/unitMUDose.npz', type=str, help='MCDose fetched from winServer will be save in this file')
+        self.parser.add_argument('--unitMUDose_npz_file', default=patient_dir+f'/results/{hparam.exp_name}/unitMUDose.npz', type=str, help='MCDose fetched from winServer will be save in this file')
         self.parser.add_argument('--winServer_MonteCarloDir', default='/mnt/win_share/'+patient_dir_winServer, type=str, help='gDPM.exe save MCDose into this directory; this directory is shared by winServer')
 
         hparam = self.parser.parse_args()
@@ -124,19 +124,28 @@ class BaseOptions():
         for k, v in zip(['deposition_file', 'tps_ray_inten_file', 'csv_file', 'pointsPosition_file', 'MonteCarlo_dir'], \
                         ['Deposition_Index', 'TPSray', 'OrganInfo', 'PointsPosition.txt', 'Pa*GPU']):
             path = Path(patient_dir, 'dataset', '*'+v+'*')
-            fn = glob.glob(str(path))[0]
-            hparam[k] = fn
+            fns = glob.glob(str(path))
+            if len(fns) == 0: 
+                cprint(f'{path} not found!', 'red')
+                raise ValueError
+            else:
+                hparam[k] = fns[0]
         
         # original or skin valid_ray_file
         fns = glob.glob(os.path.join(patient_dir, 'dataset', '*ValidMatrix*'))
-        assert len(fns) != 0
+        if len(fns) == 0: 
+            cprint(f'ValidMatrix.txt not found!', 'red')
+            raise ValueError
         for fn in fns:
             if 'original' in fn: 
                 hparam['original_valid_ray_file'] = fn
                 continue
-            if 'skin' in fn: 
+            elif 'skin' in fn: 
                 hparam['skin_valid_ray_file'] = fn
                 continue
+            else:
+                cprint(f'ValidMatrix.txt should have name original_validRay.txt or skin_ValidRay.txt!', 'red')
+                raise ValueError
 
         # dicom dir
         DICOM_dir = Path(patient_dir, 'dataset', 'DICOM')

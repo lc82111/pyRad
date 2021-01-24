@@ -15,7 +15,7 @@ def main(hparam):
         save_path = os.path.join(hparam.optimized_segments_MUs_file_path, f'{beamid}.txt')
         file_write_obj = open(save_path, 'w')
         seg, mu = dict_beam_seg_mu['Seg'], dict_beam_seg_mu['MU']
-        high, width = data.dict_rayBoolMat[beamid].shape
+        high, width = data.dict_bixelShape[beamid]
         cprint(f'beam_id={beamid}', 'green')
         cprint(f'1d seg shape: {seg.shape}', 'green')
         cprint(f'2d seg shape: {high} x {width}', 'green')

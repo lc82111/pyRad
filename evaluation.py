@@ -96,6 +96,8 @@ class Evaluation():
             # calculate mc dose on winServer
             if not Path(self.hparam.winServer_MonteCarloDir, 'gDPM_results', f'dpm_result_{self.nb_beams}_{self.nb_apertures-1}Ave.dat').is_file(): 
                 self.mc.cal_unit_MCdose_on_winServer(self.optimized_segs)
+            else:
+                cprint(f'[Warning], use saved gDPM results on local disk: {self.hparam.unitMUDose_npz_file}', 'red')
             
             # fetch mc dose from winServer
             cprint(f'fetching gDPM results from winServer and save them to local disk: {self.hparam.unitMUDose_npz_file}', 'green')
@@ -110,40 +112,12 @@ class Evaluation():
                     unit_dose[idx] = self.mc.get_unit_MCdose_from_winServer(beam_id, aperture_id)
                     idx += 1
             np.savez(self.hparam.unitMUDose_npz_file, npz=unit_dose)
+            
+            # del gDPM results on winServer to aviod misuse another experiments' gDPM results
+            dpm_result_path = Path(self.hparam.winServer_MonteCarloDir, 'gDPM_results')
+            del_fold(dpm_result_path )
+            make_dir(dpm_result_path )
             return unit_dose
-
-    def bak_gamma_plot(self, is_plot=True):
-        D,H,W = self.hparam.net_output_shape
-        gamma = Gamma(gDPM_config_path=f'/mnt/win_share/{self.hparam.patient_ID}/templates/gDPM_config.json', shape=(H,W,D))
-        gammas = OrderedBunch({'pencilBeam':[], 'pred':[]}) 
-        for beam_id, segs_mus in self.mc.segs_mus.items(): # for each beam
-            mask = self.data.dict_bixelShape[beam_id]
-            Segs = segs_mus['Seg'] # (hxw, nb_apertures)
-            for aper_id in range(self.hparam.nb_apertures): # for each aperture 
-                seg = torch.tensor(Segs[:,aper_id], dtype=torch.float32, device=self.hparam.device)
-                neural_dose, pb_dose = self.neuralDose.get_unit_neuralDose_for_a_beam(beam_id, seg, mask)  # NOTE: unit dose
-                neural_dose, pb_dose = to_np(neural_dose), to_np(pb_dose)
-                assert neural_dose.shape == self.hparam.net_output_shape
-                assert pb_dose.shape     == self.hparam.net_output_shape
-
-                mc_dose = self.mc.get_unit_MCdose_from_winServer(beam_id, aper_id)
-                assert mc_dose.shape == self.hparam.net_output_shape
-
-                neuralDoseGamma, pencilBeamGamma, pred_pass, pencilBeam_pass = gamma.get_gamma(dose_ref=mc_dose, dose_pred=neural_dose, dose_pencilBeam=pb_dose)
-                if is_plot:
-                    fig_save_path = self.save_path.joinpath(f'beam={beam_id};aper={aper_id}')
-                    make_dir(fig_save_path)
-                    gamma_plot(CTs=self.neuralDose.CTs, mcDose=mc_dose, pbDose=pb_dose, pred=neural_dose, pencilBeamGamma=pencilBeamGamma, predGamma=neuralDoseGamma, save_path=fig_save_path)
-                gammas.pencilBeam.append(pencilBeam_pass)
-                gammas.pred.append(pred_pass)
-        pdb.set_trace()
-        gammas.pred = np.asarray(gammas.pred)
-        gammas.pencilBeam = np.asarray(gammas.pencilBeam)
-        cprint(f'pencilBeam: mean={gammas.pencilBeam.mean()}; std={gammas.pencilBeam.std()}', 'yellow')
-        cprint(f'pred: mean={gammas.pred.mean()}; std={gammas.pred.std()}', 'yellow' )
-        np.savez(save_path.joinpath('pred_pencilBeam_passrate_dict.npz') , **gammas)
-        pdb.set_trace()
-        cprint('gamma_plot done.', 'green')
 
     def gamma_plot(self, is_plot=True):
         mc_dose = self.load_MonteCarlo_OrganDose(self.optimized_MUs, 'MonteCarloDose')['skin_dose']
@@ -196,6 +170,9 @@ class Evaluation():
         dict_organ_doses   = parse_MonteCarlo_dose(neural_dose, self.data)
 
         return OrderedBunch({'name': name, 'organ_dose':dict_organ_doses, 'skin_dose': neural_dose, 'skin_pencilBeamDose':pb_dose})
+
+    def load_TPS_OrganDose(self, name):
+        pass
 
     def load_JYMonteCarlo_OrganDose(self, name, dosefilepath, scale=1):
         MCdoses = self.mc.get_JY_MCdose(dosefilepath) * scale
@@ -256,6 +233,39 @@ class Evaluation():
         dict_organ_doses = split_doses(doses, self.data.organName_ptsNum)
         
         return OrderedBunch({'fluence':to_np(fluence), 'organ_dose':dict_organ_doses, 'fluenceMaps': dict_FMs, 'name': name})
+
+    def bak_gamma_plot(self, is_plot=True):
+        D,H,W = self.hparam.net_output_shape
+        gamma = Gamma(gDPM_config_path=f'/mnt/win_share/{self.hparam.patient_ID}/templates/gDPM_config.json', shape=(H,W,D))
+        gammas = OrderedBunch({'pencilBeam':[], 'pred':[]}) 
+        for beam_id, segs_mus in self.mc.segs_mus.items(): # for each beam
+            mask = self.data.dict_bixelShape[beam_id]
+            Segs = segs_mus['Seg'] # (hxw, nb_apertures)
+            for aper_id in range(self.hparam.nb_apertures): # for each aperture 
+                seg = torch.tensor(Segs[:,aper_id], dtype=torch.float32, device=self.hparam.device)
+                neural_dose, pb_dose = self.neuralDose.get_unit_neuralDose_for_a_beam(beam_id, seg, mask)  # NOTE: unit dose
+                neural_dose, pb_dose = to_np(neural_dose), to_np(pb_dose)
+                assert neural_dose.shape == self.hparam.net_output_shape
+                assert pb_dose.shape     == self.hparam.net_output_shape
+
+                mc_dose = self.mc.get_unit_MCdose_from_winServer(beam_id, aper_id)
+                assert mc_dose.shape == self.hparam.net_output_shape
+
+                neuralDoseGamma, pencilBeamGamma, pred_pass, pencilBeam_pass = gamma.get_gamma(dose_ref=mc_dose, dose_pred=neural_dose, dose_pencilBeam=pb_dose)
+                if is_plot:
+                    fig_save_path = self.save_path.joinpath(f'beam={beam_id};aper={aper_id}')
+                    make_dir(fig_save_path)
+                    gamma_plot(CTs=self.neuralDose.CTs, mcDose=mc_dose, pbDose=pb_dose, pred=neural_dose, pencilBeamGamma=pencilBeamGamma, predGamma=neuralDoseGamma, save_path=fig_save_path)
+                gammas.pencilBeam.append(pencilBeam_pass)
+                gammas.pred.append(pred_pass)
+        pdb.set_trace()
+        gammas.pred = np.asarray(gammas.pred)
+        gammas.pencilBeam = np.asarray(gammas.pencilBeam)
+        cprint(f'pencilBeam: mean={gammas.pencilBeam.mean()}; std={gammas.pencilBeam.std()}', 'yellow')
+        cprint(f'pred: mean={gammas.pred.mean()}; std={gammas.pred.std()}', 'yellow' )
+        np.savez(save_path.joinpath('pred_pencilBeam_passrate_dict.npz') , **gammas)
+        pdb.set_trace()
+        cprint('gamma_plot done.', 'green')
 
     def comparison_plots(self, plans):
         '''
