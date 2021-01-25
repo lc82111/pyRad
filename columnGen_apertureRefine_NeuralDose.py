@@ -446,7 +446,7 @@ class Optimization():
             dict_segments: {beam_id: tensor consists of segment columns (hxw, #aperture)}
             dict_partialexp: {beam_id: tensor (#aperture, h, 2)}
             dict_lrs: {beam_id: ndarray (#aperture, h, 2)}
-            dict_mus:{beam_id: tensor (#aperture,)}
+            dict_MUs:{beam_id: tensor (#aperture,)}
         Return: 
             neuralDose: tensor (D,H,W)
             dict_fluenceMaps: {beam_id, (h,w)}
@@ -459,7 +459,10 @@ class Optimization():
             pe = torch.sigmoid(dict_partialExp[beam_id])  # [0,1] constraint
             segs = self._modulate_segment_with_partialExposure(dict_segments[beam_id], pe, dict_lrs[beam_id], mask.shape)
             MUs = dict_MUs[beam_id]
-            neuralDose += self.neuralDose.get_neuralDose_for_a_beam(beam_id, MUs, segs, mask, False)
+            pdb.set_trace()
+            _neuralDose = torch.utils.checkpoint(self.neuralDose.get_neuralDose_for_a_beam, preserve_rng_state, (beam_id, MUs, segs, mask, False)) 
+            neuralDose += _neuralDose
+            #  neuralDose += self.neuralDose.get_neuralDose_for_a_beam(beam_id, MUs, segs, mask, False)
             with torch.no_grad(): # for visualization
                 fluence = torch.matmul(segs, MUs)  # {beam_id: vector}
                 dict_fluenceMaps[beam_id] = fluence.view(*mask.shape) * mask # select valid rays
