@@ -39,7 +39,7 @@ class Data():
         cprint('get info from csv file.', 'green')
         self._set_paramters_from_csv_table()
 
-        if os.path.isdir(self.hparam.CT_RTStruct_dir):
+        if os.path.isdir(self.hparam.DICOM_dir):
             cprint('get organ 3D bool index from dicom RTStruct.', 'green')
             self._get_organ_3D_index()
         else:
@@ -359,7 +359,7 @@ class Data():
         ## get contour from dicom
         # ensure all organ_names in csv appeared in RTStruct
         Dicom_Reader = Dicom_to_Imagestack(get_images_mask=True, arg_max=True)  # arg_max is important to get the right order for overlapped organs.
-        Dicom_Reader.Make_Contour_From_directory(self.hparam.CT_RTStruct_dir)
+        Dicom_Reader.Make_Contour_From_directory(self.hparam.DICOM_dir)
         roi_names = []
         is_rtstruct_complete = True
         for name in self.priorityUniqueOrganTable.columns:
@@ -374,7 +374,7 @@ class Data():
 
         # get contours 
         Dicom_Reader.set_contour_names(roi_names)
-        Dicom_Reader.Make_Contour_From_directory(self.hparam.CT_RTStruct_dir)
+        Dicom_Reader.Make_Contour_From_directory(self.hparam.DICOM_dir)
         
         # match MonteCarlo dose shape 
         if Dicom_Reader.mask.shape != self.hparam.MCDose_shape:

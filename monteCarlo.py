@@ -270,7 +270,7 @@ class MonteCarlo():
             Arguments:
                 beam_id, aperture_id: int
             Return:
-                mcDose: ndarray (D=61, H=128, W=128) == net_output_shape
+                mcDose: ndarray (D/2=61, H=centerCrop128, W=centerCrop128) == net_output_shape
         '''
         dpm_result_path = Path(self.hparam.winServer_MonteCarloDir, 'gDPM_results', f'dpm_result_{beam_id}_{aperture_id}Ave.dat')
         cprint(f'read monteCarlo unit dose from {dpm_result_path}', 'green')

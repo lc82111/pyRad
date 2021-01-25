@@ -55,7 +55,7 @@ class MonteCarlo_bak():
 
     def get_random_apertures(self):
         '''
-        return: self.dict_randomApertures {beam_id: ndarray(nb_apertures, H, W)}
+        Return: self.dict_randomApertures {beam_id: ndarray(nb_apertures, H, W)}
         '''
         def get_random_shape(H,W):
             if np.random.randint(0,2):
@@ -501,7 +501,7 @@ class GenerateTrainSet():
 
     def get_random_apertures(self, nb_beams, nb_apertures, dict_bixelShape):
         '''
-        return: dict_randomApertures {beam_id: ndarray(#apertures, H, W)}
+            Return: dict_randomApertures {beam_id: ndarray(#apertures, H, W)}
         '''
         def get_random_shape(H,W):
             if np.random.randint(0,2):
@@ -532,18 +532,13 @@ class GenerateTrainSet():
         pickle_object(save_path, dict_randomApertures)
         return dict_randomApertures 
     
-    def center_crop(self, ndarray):
-        tensor = torch.tensor(ndarray, dtype=torch.float32)
-        tensor = torchvision.transforms.CenterCrop(128)(tensor)
-        return tensor.cpu().numpy().astype(np.float32)
-
     def get_CTs(self):
         if not os.path.isfile(self.npz_save_path.joinpath('CTs.npz')):
             D, H, W = self.hparam.MCDose_shape 
             CTs = rescale_intensity(self.mc.data.Dicom_Reader.ArrayDicom, in_range='image', out_range=(0.0,1.0))  # TODO: in_range='image': min max of CTs; use HU range (-1024, 3071) instead?
             CTs = resize(CTs, (D//2,H,W), order=3, mode='constant', cval=0, clip=False, preserve_range=True, anti_aliasing=True)
             CTs = np.where(CTs<0, 0, CTs)  # bicubic(order=3) resize may create negative values
-            CTs = self.center_crop(CTs)
+            CTs = center_crop(CTs)
             assert CTs.dtype == np.float32
             assert CTs.min() >= 0
             npz_dict = {'CTs': self.get_CTs()}
@@ -599,11 +594,11 @@ class GenerateTrainSet():
                     p.join()
 
         # CT npz
-        self.get_CTs()
+        CTs = self.get_CTs()
 
         # cal mc unit dose on winServer?
-        if not Path(self.hparam.winServer_MonteCarloDir, 'gDPM_results', f'dpm_result_{data.num_beams}_{self.hparam.nb_randomApertures-1}Ave.dat').is_file(): 
-            self.mc.cal_unit_MCdose_on_winServer(dict_segs)
+        if not Path(self.hparam.winServer_MonteCarloDir, 'gDPM_results', f'dpm_result_{self.data.num_beams}_{self.hparam.nb_randomApertures-1}Ave.dat').is_file(): 
+            self.mc.cal_unit_MCdose_on_winServer(self.dict_randomSegs)
 
         # doses npz
         uids = UIDs(self.npz_save_path, Path(self.hparam.winServer_MonteCarloDir).joinpath('gDPM_results/dpm_result_*Ave.dat')).get_winServer_uids()
@@ -625,9 +620,6 @@ class GenerateTrainSet():
 def main(hparam):
     g = GenerateTrainSet(hparam) 
 
-    if hparam.test_mcDose:
-        test_mcDose(4, 692, npz_path)
-
     if hparam.test_pbmcDoses:
         for beam_id in range(1, 2):
             g.test_mcDose_pbDose(beam_id, 0)
@@ -635,7 +627,10 @@ def main(hparam):
             g.test_mcDose_pbDose(beam_id, 2)
 
     if hparam.mcpbDose2npz_Interp:
-        g.generate_mcDose_pbDose_dataset_Interp(hparam, data, mc, pb, npz_path)
+        g.generate_mcDose_pbDose_dataset_Interp()
+
+    if hparam.test_mcDose:
+        test_mcDose(4, 692, npz_path)
 
     if hparam.npz2h5:
         generate_h5Files(hparam)

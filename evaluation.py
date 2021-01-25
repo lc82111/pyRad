@@ -8,13 +8,15 @@ from scipy.ndimage import median_filter
 import numpy.random as npr
 import pandas as pd
 from termcolor import cprint
+from dicompylercore import dicomparser, dvh, dvhcalc
+from skimage.transform import resize, rotate 
 
 import torch
 from torch import nn
 import torch.nn.functional as torchF
 from torch.utils.tensorboard import SummaryWriter
 
-import os, pdb, sys, collections, pickle, shutil
+import os, pdb, sys, collections, pickle, shutil, glob, pydicom
 from argparse import ArgumentParser, Namespace
 from termcolor import colored, cprint
 from io import StringIO
@@ -50,7 +52,7 @@ class Evaluation():
         if hparam.MCPlan or hparam.MCJYPlan or hparam.MCMURefinedPlan or hparam.NeuralDosePlan:
             self._set_optimized_segments_MUs()
             self.mc = MonteCarlo(hparam, self.data)
-            self.unitMUDose = self.get_all_beams_MCdose_for_optimizedSegMUs()  # unitMUDose, ndarray (nb_beams*nb_apertures, D, H, W) 
+            self.unitMUDose = self.get_all_beams_MCdose_for_optimizedSegMUs()  # unitMUDose, ndarray (nb_beams*nb_apertures=30, D/2=61, H=CenterCrop128, W=CenterCrop128)
 
         # neural dose 
         self.neuralDose = NeuralDose(hparam, self.data)
@@ -87,7 +89,7 @@ class Evaluation():
             self.optimized_segs[beam_id] = segs.T.reshape(self.nb_apertures, H, W)
    
     def get_all_beams_MCdose_for_optimizedSegMUs(self):
-        ''' Return: unit dose, ndarray (#beams*#apertures, D, H, W) '''
+        ''' Return: unit dose, ndarray (#beams*#apertures, D/2, H=centerCrop128, W=centerCrop128) '''
         if os.path.isfile(self.hparam.unitMUDose_npz_file):
             cprint(f'load {self.hparam.unitMUDose_npz_file}', 'green')
             return np.load(self.hparam.unitMUDose_npz_file)['npz']
@@ -142,7 +144,7 @@ class Evaluation():
     def load_MonteCarlo_OrganDose(self, MUs, name, scale=1):
         ''' self.optimized_MUs: ndarray (#beams*#apertures, 1, 1, 1)  '''
         MUs = np.abs(MUs) / self.hparam.dose_scale  # x1000
-        dose = self.unitMUDose * MUs * scale
+        dose = self.unitMUDose * MUs * scale  # unitMUDose, ndarray (nb_beams*nb_apertures=30, D/2=61, H=CenterCrop128, W=CenterCrop128) 
         dose = dose.sum(axis=0, keepdims=False)  #  (D, H, W) 
         dose = torch.tensor(dose, dtype=torch.float32, device=self.hparam.device)
         dict_organ_doses = parse_MonteCarlo_dose(dose, self.data)  # parse organ_doses to obtain individual organ doses
@@ -171,8 +173,20 @@ class Evaluation():
 
         return OrderedBunch({'name': name, 'organ_dose':dict_organ_doses, 'skin_dose': neural_dose, 'skin_pencilBeamDose':pb_dose})
 
-    def load_TPS_OrganDose(self, name):
-        pass
+    def load_originalMC_OrganDose(self):
+        fns = glob.glob(f'{self.hparam.DICOM_DIR}/RTDOSE*原计划.dcm')
+        assert len(fns) == 1
+        dose = load_DICOM_dose(fns[0])
+        D,H,W = self.hparam.MCDose_shape
+        dose = resize(dose, (D,H,W), order=3, mode='constant', cval=0, clip=False, preserve_range=True, anti_aliasing=True)
+        dose = np.where(dose<0, 0, dose)  # bicubic(order=3) resize may create negative values
+        dose = center_crop(dose)
+        return dose
+
+    def load_originalPB_OrganDose(self):
+        fns = glob.glob(f'{self.hparam.DICOM_DIR}/RTDOSE*原计划-good.dcm')
+        assert len(fns) == 1
+        dose = load_DICOM_dose(fns[0])
 
     def load_JYMonteCarlo_OrganDose(self, name, dosefilepath, scale=1):
         MCdoses = self.mc.get_JY_MCdose(dosefilepath) * scale

@@ -150,7 +150,7 @@ class BaseOptions():
         # dicom dir
         DICOM_dir = Path(patient_dir, 'dataset', 'DICOM')
         if DICOM_dir.is_dir():
-            hparam.CT_RTStruct_dir = str(DICOM_dir)
+            hparam.DICOM_dir = str(DICOM_dir)
         else:
             raise ValueError(f'can not find DICOM dir {DICOM_dir}')
 

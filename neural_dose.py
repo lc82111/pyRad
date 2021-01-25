@@ -117,27 +117,6 @@ class PencilBeam():
         dose = dose.squeeze()
         return dose
 
-    def get_dose(self, uid):
-        ''' return:pbDose (#slice, H, W) '''
-        self._load_randApert()
-
-        # get saved fluence of beam_id and aperture_id
-        beam_id, apert_id = uid.split('_')
-        beam_id, apert_id = int(beam_id), int(apert_id)
-        preset_FM = self.dict_randomApertures[beam_id][apert_id]  # (H, W)
-        dict_FMs = OrderedBunch()
-        for bid, FM in self.data.dict_rayBoolMat.copy().items():
-            if bid == beam_id:
-                dict_FMs[bid] = FM * preset_FM.copy()  # FM may not all ones
-            else:
-                dict_FMs[bid] = FM*0
-        fluence_vector = self.data.get_rays_from_fluences(dict_FMs)  
-        dose = self.data.deposition.dot(fluence_vector)
-        vector_dose = dose[0:self.data.get_pointNum_from_organName(self.roi_skinName)]  # only care the dose of skin
-        pbDose = self._parse_dose_torch(torch.tensor(vector_dose, dtype=torch.float32)).cpu().numpy() # 3D dose 63x256x256
-        pbDose = np.squeeze(pbDose).astype(np.float32)
-        return pbDose
-
     def get_unit_pencilBeamDose(self, beam_id, segment):
         ''' 
         Arguments: 
@@ -178,8 +157,8 @@ class NeuralDose():
                 segs: tensor (#bixels, #apertures), all rays including valid and non-valid rays
                 mask: tensor (h,w), hxw==#bixels, bool, 1 indicates valid ray 
            Returns:
-                neuralDose: tensor (D,H,W), non-unit neural dose 
-                pbDose:     tensor (D,H,W), non-unit pencil beam dose
+                neuralDose: tensor (D/2=61,H=centerCrop128,W=centerCrop128), non-unit neural dose 
+                pbDose:     tensor (D/2=61,H=centerCrop128,W=centerCrop128), non-unit pencil beam dose
         '''
         assert isinstance(MUs,  torch.Tensor)
         assert isinstance(segs, torch.Tensor)
@@ -214,8 +193,8 @@ class NeuralDose():
                     segment: bool tensor vector (#valid_bixels, )  NOTE: valid rays!
                     beam_id: int
             Returns:
-                    unitPBDose:     tensor (D,H,W), unit dose
-                    unitNeuralDose: tensor (D,H,W), unit dose
+                    unitPBDose:     tensor (D/2,H=centerCrop128,W=centerCrop128), unit dose
+                    unitNeuralDose: tensor (D/2,H=centerCrop128,W=centerCrop128), unit dose
         '''
         # PencilBeam dose
         # print(f'{self.dict_deps[beam_id].shape}----{segment.shape}')

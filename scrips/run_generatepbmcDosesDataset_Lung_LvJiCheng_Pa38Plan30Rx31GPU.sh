@@ -10,8 +10,9 @@ set -ex
   # --patient_ID Chest_Pa26Plan12Rx14GPU \
   # --MCDose_shape 126,256,256 \
   # --mcpbDose2npz_Interp
+  # --test_pbmcDoses \
 python ./pyRad/generate_trainingset.py \
-  --test_pbmcDoses \
+  --mcpbDose2npz_Interp \
   --patient_ID  Lung_LvJiCheng_Pa38Plan30Rx31GPU_skin \
   --exp_name tmp \
   --MCDose_shape 122,256,256 \

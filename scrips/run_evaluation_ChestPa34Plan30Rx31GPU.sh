@@ -12,7 +12,6 @@ set -ex
   #--cal_gamma \
 
 python ./pyRad/evaluation.py \
-  --cal_gamma \
   --NeuralDosePlan \
   --MCPlan \
   --patient_ID Chest_neuralDose_Pa34Plan30Rx31GPU \

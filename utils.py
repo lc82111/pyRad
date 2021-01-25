@@ -85,6 +85,20 @@ def parse_MonteCarlo_dose(MCDose, data):
         dict_organ_dose[organ_name] = MCDose[msk]
     return dict_organ_dose 
 
+def load_DICOM_dose(fn): 
+    dp = dicomparser.DicomParser(fn)
+    dp.ds.file_meta.TransferSyntaxUID = pydicom.uid.ImplicitVRLittleEndian
+    dose = dp.ds.pixel_array * float(dp.GetDoseData()['dosegridscaling']) * 100  # cGY
+    assert dp.GetDoseData()['rows'] == 300
+    assert dp.GetDoseData()['columns'] == 300
+    return dose
+
+
+def center_crop(self, ndarray, size=128):
+    tensor = torch.tensor(ndarray, dtype=torch.float32)
+    tensor = torchvision.transforms.CenterCrop(size)(tensor)
+    return tensor.cpu().numpy().astype(np.float32)
+
 def call_FM_gDPM_on_windowsServer(PID, nb_beams, nb_apertures, nb_threads, host_ip="192.168.10.103", port=13000):
     cprint(f'send msg to windows Server to call FM.exe and gDPM.exe.', 'green')
 
