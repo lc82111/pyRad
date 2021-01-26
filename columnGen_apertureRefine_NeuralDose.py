@@ -460,7 +460,9 @@ class Optimization():
             segs = self._modulate_segment_with_partialExposure(dict_segments[beam_id], pe, dict_lrs[beam_id], mask.shape)
             MUs = dict_MUs[beam_id]
             pdb.set_trace()
-            _neuralDose = torch.utils.checkpoint(self.neuralDose.get_neuralDose_for_a_beam, preserve_rng_state, (beam_id, MUs, segs, mask, False)) 
+            _neuralDose = torch.utils.checkpoint.checkpoint(self.neuralDose.get_neuralDose_for_a_beam,
+                                                            beam_id, MUs, segs, mask, False,
+                                                            preserve_rng_state=False)
             neuralDose += _neuralDose
             #  neuralDose += self.neuralDose.get_neuralDose_for_a_beam(beam_id, MUs, segs, mask, False)
             with torch.no_grad(): # for visualization
