@@ -495,7 +495,7 @@ class GenerateTrainSet():
         self.data = Data(hparam)
         self.mc = MonteCarlo(hparam, self.data)
         self.pb = PencilBeam(hparam, self.data)
-        self.npz_save_path = Path('/mnt/ssd/tps_optimization/').joinpath(hparam.patient_ID).joinpath('pbmcDoses_npz_Interp')
+        self.npz_save_path = Path('/mnt/ssd/tps_optimization/patients_data').joinpath(hparam.patient_ID).joinpath('pbmcDoses_npz_Interp')
         make_dir(self.npz_save_path)
         self.dict_randomSegs = self.get_random_apertures(self.data.num_beams, self.hparam.nb_randomApertures, self.data.dict_bixelShape)
 
@@ -571,14 +571,14 @@ class GenerateTrainSet():
             assert mcDose.max() > 0,  f'mcDose.max {mcDose.max()}'
             assert mcDose.shape == pbDose.shape, 'pbDose.shape != mcDose.shape'
 
-            save_path = npz_save_path.joinpath(f'mcpbDose_{beam_id}{apert_id.zfill(6)}.npz')
+            save_path = self.npz_save_path.joinpath(f'mcpbDose_{beam_id}{str(apert_id).zfill(6)}.npz')
             npz_dict = {'mcDose':mcDose, 'pbDose':pbDose}
             np.savez(save_path, **npz_dict)
             print(f'saved {uid}')
             
             # visually check a pair of pb and mc dose
-            if uid == '1_0':
-                self.test_mcDose_pbDose(self, 1, 0)
+            #  if uid == '1_0':
+                #  self.test_mcDose_pbDose(1, 0)
 
         def multiprocess(uids, nb_thread=10):
             for batch_uid in batch(uids, nb_thread):
@@ -593,6 +593,11 @@ class GenerateTrainSet():
                 for p in ps:
                     p.join()
 
+        def singleprocess(uids):
+            for uid in uids:
+                print(f'processing: {uid}')
+                process(uid)
+
         # CT npz
         CTs = self.get_CTs()
 
@@ -602,7 +607,8 @@ class GenerateTrainSet():
 
         # doses npz
         uids = UIDs(self.npz_save_path, Path(self.hparam.winServer_MonteCarloDir).joinpath('gDPM_results/dpm_result_*Ave.dat')).get_winServer_uids()
-        multiprocess(uids)
+        #  multiprocess(uids)
+        singleprocess(uids)
 
     def test_mcDose_pbDose(self, beam_id, apert_id):
         CTs = self.get_CTs()

@@ -93,7 +93,6 @@ def load_DICOM_dose(fn):
     assert dp.GetDoseData()['columns'] == 300
     return dose
 
-
 def center_crop(self, ndarray, size=128):
     tensor = torch.tensor(ndarray, dtype=torch.float32)
     tensor = torchvision.transforms.CenterCrop(size)(tensor)
@@ -835,7 +834,7 @@ class UIDs():
         for fn in dpm_results_fns:  
             uid = fn.strip('dpm_results_').strip('Ave.data')
             if not self.in_npz_uids(uid): uids.append(uid)
-        print(f'following uids will be convert {uids}')
+        print(f'following uids on winServer will be used: {uids}')
         return uids
 
 def test_plot(uid, CTs, mcDose, pbDose):
