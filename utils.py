@@ -19,7 +19,7 @@ from io import StringIO
 from shutil import copyfile
 import sys, collections, shutil, pdb, pickle, datetime
 
-import torch
+import torch, torchvision
 
 def assert_single_connected_components(segs, h, w):
     '''segs: (#bxiels, #aperture)'''
@@ -93,7 +93,7 @@ def load_DICOM_dose(fn):
     assert dp.GetDoseData()['columns'] == 300
     return dose
 
-def center_crop(self, ndarray, size=128):
+def center_crop(ndarray, size=128):
     tensor = torch.tensor(ndarray, dtype=torch.float32)
     tensor = torchvision.transforms.CenterCrop(size)(tensor)
     return tensor.cpu().numpy().astype(np.float32)

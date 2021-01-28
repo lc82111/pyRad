@@ -50,22 +50,28 @@ def main(hparam):
     assert mcD == int(args_dict['CTdimension z'])
     assert mcH == int(args_dict['CTdimension y'])
     assert mcW == int(args_dict['CTdimension x'])
-
+    
     ctW, ctH, ctD = geometry.CT.size
     sx, sy, sz = geometry.CT.spacing/10  # mm->cm 
     sz, sy, sx = sz*ctD/mcD, sy*ctH/mcH, sx*ctW/mcW 
+    sz, sy, sx = round(sz,7), round(sy,7), round(sx,7)   
     assert sx == float(args_dict['CTresolution x'])
     assert sy == float(args_dict['CTresolution y'])
     assert sz == float(args_dict['CTresolution z'])
 
     ox, oy, oz = geometry.CT.origin/10  # mm->cm
-    assert ox == float(args_dict['CToffset x'])
-    assert oy == float(args_dict['CToffset y'])
+    #  oz, oy, ox = round(oz,7), round(oy,7), round(ox,7)
+    ctoffset_x = float(args_dict['CToffset x']) 
+    ctoffset_y = float(args_dict['CToffset y']) 
+    if ox != ctoffset_x: cprint(f'[Warning] patient.bat --CToffset x {ctoffset_x} != CT DICOM origin x {ox}', 'red')  
+    if oy != ctoffset_y: cprint(f'[Warning] patient.bat --CToffset y {ctoffset_y} != CT DICOM origin y {oy}', 'red')  
     #  assert oz == float(args_dict['CToffset z'])  # NOTE: inconsistent
 
     cx, cy, cz = geometry.plan.isocenter/10  # mm->cm
-    assert cx == float(args_dict['Isocenter x'])
-    assert cy == float(args_dict['Isocenter y'])
+    iso_x = float(args_dict['Isocenter x'])
+    iso_y = float(args_dict['Isocenter y'])
+    if cx != iso_x: cprint(f'[Warning] patient.bat --Isocenter x {iso_x} != RTPlan DICOM isocenter x {cx}', 'red')  
+    if cy != iso_y: cprint(f'[Warning] patient.bat --Isocenter y {iso_y} != RTPlan DICOM isocenter y {cy}', 'red')  
     #  assert cz == float(args_dict['Isocenter z'])   # NOTE: inconsistent
 
     gDPM_config =  { "CTdimension": {
@@ -79,13 +85,13 @@ def main(hparam):
                         "z": sz, #0.25     cm
                       },
                       "CToffset": {
-                        "x": ox, #-30    cm
-                        "y": oy, #-30    cm
+                        "x": ctoffset_x, #-30    cm
+                        "y": ctoffset_y, #-30    cm
                         "z": float(args_dict['CToffset z']), #-15.75 cm
                       },
                       "Isocenter": {
-                        "x": cx, # -1.809999
-                        "y": cy, #-0.1599998
+                        "x": iso_x, # -1.809999
+                        "y": iso_y, #-0.1599998
                         "z": float(args_dict['Isocenter z']), #5.379999
                       },
                       "SAD": float(args_dict['SAD']),
