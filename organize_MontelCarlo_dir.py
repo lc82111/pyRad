@@ -55,24 +55,27 @@ def main(hparam):
     sx, sy, sz = geometry.CT.spacing/10  # mm->cm 
     sz, sy, sx = sz*ctD/mcD, sy*ctH/mcH, sx*ctW/mcW 
     sz, sy, sx = round(sz,7), round(sy,7), round(sx,7)   
-    assert sx == float(args_dict['CTresolution x'])
-    assert sy == float(args_dict['CTresolution y'])
-    assert sz == float(args_dict['CTresolution z'])
+    mcsz, mcsy, mcsx = float(args_dict['CTresolution z']), float(args_dict['CTresolution y']), float(args_dict['CTresolution x'])
+    if mcsx!=sx: cprint(f'[Warning] patient.bat --CTresolution x {mcsx} != CT DICOM spacing x {sx}', 'red')  
+    if mcsy!=sy: cprint(f'[Warning] patient.bat --CTresolution y {mcsy} != CT DICOM spacing y {sy}', 'red')  
+    if mcsz!=sz: cprint(f'[Warning] patient.bat --CTresolution z {mcsz} != CT DICOM spacing z {sz}', 'red')  
 
     ox, oy, oz = geometry.CT.origin/10  # mm->cm
     #  oz, oy, ox = round(oz,7), round(oy,7), round(ox,7)
     ctoffset_x = float(args_dict['CToffset x']) 
     ctoffset_y = float(args_dict['CToffset y']) 
+    ctoffset_z = float(args_dict['CToffset z']) 
     if ox != ctoffset_x: cprint(f'[Warning] patient.bat --CToffset x {ctoffset_x} != CT DICOM origin x {ox}', 'red')  
     if oy != ctoffset_y: cprint(f'[Warning] patient.bat --CToffset y {ctoffset_y} != CT DICOM origin y {oy}', 'red')  
-    #  assert oz == float(args_dict['CToffset z'])  # NOTE: inconsistent
+    if oz != ctoffset_z: cprint(f'[Warning] patient.bat --CToffset z {ctoffset_z} != CT DICOM origin z {oz}', 'red')  # NOTE: inconsistent
 
     cx, cy, cz = geometry.plan.isocenter/10  # mm->cm
     iso_x = float(args_dict['Isocenter x'])
     iso_y = float(args_dict['Isocenter y'])
+    iso_z = float(args_dict['Isocenter z'])
     if cx != iso_x: cprint(f'[Warning] patient.bat --Isocenter x {iso_x} != RTPlan DICOM isocenter x {cx}', 'red')  
     if cy != iso_y: cprint(f'[Warning] patient.bat --Isocenter y {iso_y} != RTPlan DICOM isocenter y {cy}', 'red')  
-    #  assert cz == float(args_dict['Isocenter z'])   # NOTE: inconsistent
+    if cz != iso_z: cprint(f'[Warning] patient.bat --Isocenter z {iso_z} != RTPlan DICOM isocenter z {cz}', 'red')   # NOTE: inconsistent
 
     gDPM_config =  { "CTdimension": {
                         "x": mcW,
@@ -87,12 +90,12 @@ def main(hparam):
                       "CToffset": {
                         "x": ctoffset_x, #-30    cm
                         "y": ctoffset_y, #-30    cm
-                        "z": float(args_dict['CToffset z']), #-15.75 cm
+                        "z": ctoffset_z, #-15.75 cm
                       },
                       "Isocenter": {
                         "x": iso_x, # -1.809999
                         "y": iso_y, #-0.1599998
-                        "z": float(args_dict['Isocenter z']), #5.379999
+                        "z": iso_z, #5.379999
                       },
                       "SAD": float(args_dict['SAD']),
                       "NumberOfHistories": 10000000112,

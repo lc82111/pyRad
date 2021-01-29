@@ -32,45 +32,10 @@ class MonteCarlo():
         self.nb_leafPairs = 51    # 51 leaf pairs
         self.x_spacing    = 0.5   # cm
         self.nb_beams     = data.num_beams
-        cprint(f'using number of leaves {self.nb_leafPairs}, grid size {self.x_spacing} cm for x axis', 'red')  # juyao told me
+        cprint(f'MonteCarlo: using number of leaves {self.nb_leafPairs}, grid size {self.x_spacing} cm for x axis', 'red')  # juyao told me
         
         self._get_leafBottomEdgePosition()
         self._get_leafInJawField()  # get y axis leaf position from jaw_y1 ,jaw_y2
-
-    def get_random_apertures(self, nb_apertures=1000):
-        ''' generate random apertures for deep learning training set. 
-            Arguments: nb_apertures we will generate this number random apertures
-            Return: self.dict_randomApertures {beam_id: ndarray(nb_apertures, h, w)} '''
-        def get_random_shape(H,W):
-            if np.random.randint(0,2):
-                img = random_shapes((H, W), max_shapes=3, multichannel=False, min_size=min(H,W)//3, allow_overlap=True, intensity_range=(1,1))[0]
-                img = np.where(img==255, 0, img)
-            else:
-                img = np.zeros((H,W), dtype=np.uint8)
-                for i in range(len(img)):  # for each row
-                    l, r = np.random.randint(0, W+1, (2,))
-                    if l==r: continue
-                    if l>r: l,r = r,l 
-                    img[i, l:r] = 1
-            return img
-        
-        self.nb_apertures = nb_apertures 
-
-        save_path = Path(hparam.patient_ID).joinpath('dataset/dict_randomApertures.pickle')
-        if os.path.isfile(save_path):
-            self.dict_randomApertures = unpickle_object(save_path)
-            return
-
-        self.dict_randomApertures = OrderedBunch() 
-        for beam_id in range(1, self.nb_beams+1):  # for each beam
-            H, W = self.data.dict_bixelShape[beam_id]
-            self.dict_randomApertures[beam_id] = np.zeros((self.nb_apertures, H, W), np.uint8)  # default closed apertures
-            for i, apt in enumerate(self.dict_randomApertures[beam_id]):  # for each apterture 
-                if i==0:   # skip first aperture for each beam to get a all-leaf-opened aperture
-                    self.dict_randomApertures[beam_id][i] = np.ones((H,W), np.uint8)
-                else:
-                    self.dict_randomApertures[beam_id][i] = get_random_shape(H,W)
-        pickle_object(save_path, self.dict_randomApertures)
 
     def _get_leafBottomEdgePosition(self):
         '''
@@ -120,7 +85,7 @@ class MonteCarlo():
             coords.append(coord26thLeafbot)
 
         # round to 2 decimals to consistent with TPS 
-        self.coords = [round(c, 2) for c in coords]
+        self.coords = [round(c, 1) for c in coords]
 
     def _get_leafInJawField(self):
         '''
@@ -170,6 +135,7 @@ class MonteCarlo():
                 #  print(f'{in_field}---{i}: {c}')
             #  print(f'{self.dict_inJaw[beam_id].sum()}')
             assert self.dict_inJaw[beam_id].sum() == H, f'H={H}, inJaw={self.dict_inJaw[beam_id].sum()}'
+            #print(f'H={H}, inJaw={self.dict_inJaw[beam_id].sum()}')
 
     def _get_x_axis_position(self, dict_segments):
         '''get x axis positions 

@@ -27,13 +27,13 @@ from termcolor import colored, cprint
 from io import StringIO
 import sys, glob, os, pdb, shutil, pickle, collections, time
 from pathlib import Path
-from socket import *
+from multiprocessing import Process 
+from threading import Thread
 
 #sys.path.insert(0, '/home/congliu/lina_tech/tps_optimization/FluenceMap/codes')
 from utils import *
 from data import Data 
 from options import BaseOptions
-from multiprocessing import Process 
 
 from monteCarlo import MonteCarlo
 from neural_dose import PencilBeam
@@ -48,7 +48,6 @@ def test_mcDose(beam_id, apert_id, npz_path):
         mcDose = np.swapaxes(dose, 2, 1)
     test_plot(CTs, mcDose, mcDose)
     print('done')
-
 
 def generate_mcDose_pbDose_dataset(data, mc, pb, npz_save_path):
     def resize_rotate_crop(dose, uid, margin=5):
@@ -154,7 +153,6 @@ def test_mcDose_pbDose(hparam, mc, pb, uid, npz_save_path, is_rotation=False):
     pbDose = pb.get_dose(uid)
     test_plot(f'beamID{beam_id}_aptID{apert_id}', CTs, mcDose, pbDose)
     print(f'{uid} done')
-
 
 def generate_mcDose_pbDose_dataset_npz_noRotation_noInterp(data, mc, pb, npz_save_path):
     def center_crop(ndarray):
@@ -315,10 +313,10 @@ class GenerateTrainSet():
             beam_id, apert_id = int(beam_id), int(apert_id) 
 
             mcDose = self.mc.get_unit_MCdose_from_winServer(beam_id, apert_id) # (61,128,128)
-
-            seg = self.dict_randomSegs[beam_id][apert_id]
-            pbDose = self.pb.get_unit_pencilBeamDose(beam_id, torch.tensor(seg.flatten(), dtype=torch.float32, device=self.hparam.device))
-            pbDose = to_np(pbDose)  # (D=61,H=128,W=128)
+            with torch.no_grad():
+                seg = self.dict_randomSegs[beam_id][apert_id]
+                pbDose = self.pb.get_unit_pencilBeamDose(beam_id, torch.tensor(seg.flatten(), dtype=torch.float32, device=self.hparam.device))
+                pbDose = to_np(pbDose)  # (D=61,H=128,W=128)
 
             print(f'{uid} mcDose max={mcDose.max()}')
             print(f'{uid} pbDose max={pbDose.max()}')
@@ -341,14 +339,14 @@ class GenerateTrainSet():
             if uid == '1_0':
                 self.test_mcDose_pbDose(1, 0)
 
-        def multiprocess(uids, nb_thread=10):
+        def multiprocess(uids, nb_thread=20):
             for batch_uid in batch(uids, nb_thread):
                 print(f'processing: {batch_uid}')
                 ps = []
                 for uid in batch_uid:
                     #  process(uid)  # for test
                     #  pdb.set_trace()
-                    ps.append(Process(target=process, args=(uid,)))
+                    ps.append(Thread(target=process, args=(uid,)))
                     time.sleep(1)  # sleep 1s to avoid accessing winServer simultaneously 
                     ps[-1].start()
                 for p in ps:
@@ -368,8 +366,8 @@ class GenerateTrainSet():
 
         # doses npz
         uids = UIDs(self.npz_save_path, Path(self.hparam.winServer_MonteCarloDir).joinpath('gDPM_results/dpm_result_*Ave.dat')).get_winServer_uids()
-        #  multiprocess(uids)
-        singleprocess(uids)
+        multiprocess(uids)
+        #  singleprocess(uids)
 
     def test_mcDose_pbDose(self, beam_id, apert_id):
         CTs = self.get_CTs()
@@ -380,7 +378,7 @@ class GenerateTrainSet():
         pbDose = self.pb.get_unit_pencilBeamDose(beam_id, torch.tensor(seg.flatten(), dtype=torch.float32, device=self.hparam.device))
         pbDose = to_np(pbDose)  # (D=61,H=128,W=128)
 
-        test_plot(f'beamID{beam_id}_aptID{apert_id}', CTs, mcDose, pbDose)
+        test_plot(f'self.hparam.patient_ID', CTs, mcDose, pbDose)
 
         print(f'test plot done')
 

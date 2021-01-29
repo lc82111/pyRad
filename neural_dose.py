@@ -89,7 +89,8 @@ class PencilBeam():
             coord = [float(x) for x in line.split()]  # split uses dafault delimiter: space and \n 
             coords.append(coord)
         coords = np.asarray(coords)
-        assert len(coords) == self.data.get_pointNum_from_organName(self.roi_skinName)
+        if len(coords) != self.data.get_pointNum_from_organName(self.roi_skinName):
+            cprint('[Error] {len(coords)} != {self.data.get_pointNum_from_organName(self.roi_skinName)}')
 
         # sort pointPositions to ensure the consistent ordering with deposition.txt: z decending, y decending, x ascending  
         sort_index = np.lexsort((coords[:,0], -coords[:,1], -coords[:,2]))  # NOTE TODO: the PTVs have duplicate begin and end slices

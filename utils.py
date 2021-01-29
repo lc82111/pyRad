@@ -837,8 +837,8 @@ class UIDs():
         print(f'following uids on winServer will be used: {uids}')
         return uids
 
-def test_plot(uid, CTs, mcDose, pbDose):
-    save_path = f'/tmp/{get_now_time()}' 
+def test_plot(PID, CTs, mcDose, pbDose):
+    save_path = f'/tmp/{PID}/{get_now_time()}' 
     make_dir(save_path)
     for i, (ct, md, pd) in enumerate(zip(CTs, mcDose, pbDose)): 
         figs, axes = plt.subplots(1, 2, figsize=(2*10, 1*10))
