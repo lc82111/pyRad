@@ -6,6 +6,7 @@ from braceexpand import braceexpand
 from scipy.ndimage.measurements import label 
 from orderedbunch import OrderedBunch
 from scipy.ndimage import median_filter 
+from scipy.ndimage.measurements import label as scipy_label
 import numpy.random as npr
 import pandas as pd
 
@@ -524,7 +525,10 @@ def save_result(mp):
         '''
         for i, aperture in enumerate(lrs):  # for each aperture
             for j, lr in enumerate(aperture):  # for each row
-                #assert label(seg[j*W:j*W+W, i])[1] <=1  # ensure only zero or one connected component in a row
+                if scipy_label(seg[j*W:j*W+W, i])[-1] != 1 and scipy_label(seg[j*W:j*W+W, i])[-1] != 0:  # ensure only zero or one connected component in a row
+                    cprint('[Error] 2 non-zero connected components in one row.')
+                    pdb.set_trace()
+                    print(seg[j*W:j*W+W, i])
                 [l, r] = lr
                 l_pe, r_pe = sigmoid(pes[i, j])
                 # close hopeless bixel?
@@ -547,7 +551,7 @@ def save_result(mp):
         seg = _modulate_segment_with_partialExposure(seg, lrs, pes)
         assert_single_connected_components(seg, H, W)
 
-        results[beam_id] = {'MU': np.abs(MU), 'Seg': seg, 'lrs':lrs, 'PEs':pes, 'global_step':mp.optim.global_step} 
+        results[beam_id] = {'MU': np.abs(MU), 'Seg': seg, 'lrs':lrs, 'PEs':pes, 'global_step':mp.optim.global_step}
 
     if not os.path.isdir(hparam.optimized_segments_MUs_file_path):
         os.makedirs(hparam.optimized_segments_MUs_file_path)
@@ -565,12 +569,8 @@ def main(hparam):
     sp = SubProblem(hparam, loss, data)
     mp = MasterProblem(hparam, loss, data, sp)
 
-    #  mp.dict_lrs = unpickle_object('dict_lrs.pkl')
-    #  mp.dict_partialExp = unpickle_object('dict_partialExp.pkl')
-    #  mp.dict_segments = unpickle_object('dict_segments.pkl')
-    #  mp.dict_MUs = unpickle_object('mp_dict_MUs.pkl')
-    #  mp.optim.global_step = unpickle_object('global_step.pkl')
     #  pdb.set_trace()
+    #  mp.dict_segments, mp.dict_MUs, mp.dict_lrs, mp.optim.global_step = unpickle_object('mp.pkl')
     #  save_result(mp)
     #  pdb.set_trace()
 

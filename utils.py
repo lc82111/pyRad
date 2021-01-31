@@ -31,7 +31,9 @@ def assert_single_connected_components(segs, h, w):
     for seg in segs.T: # each aperture
         for row in seg.reshape(h,w):  # each row 
             if scipy_label(row)[-1] != 1 and scipy_label(row)[-1] != 0:
-                raise ValueError(row)
+                cprint('[Error] 2 non-zero connected components in one row.')
+                pdb.set_trace()
+                print(row)
 
 def get_now_time():
     now = datetime.datetime.now()
