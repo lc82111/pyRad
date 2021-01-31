@@ -22,6 +22,7 @@ from io import StringIO
 from pathlib import Path
 import pandas as pd
 
+from neuralDose.utils import MyModelCheckpoint
 from utils import *
 from data import Data
 from loss import Loss
@@ -30,7 +31,6 @@ from options import BaseOptions
 from neural_dose import PencilBeam
 from neuralDose.net.Unet3D import UNet3D 
 from neuralDose.data.datamodule import Transform 
-from neuralDose.utils import MyModelCheckpoint
 from neural_dose import NeuralDose
 
 
@@ -524,7 +524,7 @@ def save_result(mp):
         '''
         for i, aperture in enumerate(lrs):  # for each aperture
             for j, lr in enumerate(aperture):  # for each row
-                assert label(seg[j*W:j*W+W, i])[1] <=1  # ensure only zero or one connected component in a row
+                #assert label(seg[j*W:j*W+W, i])[1] <=1  # ensure only zero or one connected component in a row
                 [l, r] = lr
                 l_pe, r_pe = sigmoid(pes[i, j])
                 # close hopeless bixel?
@@ -564,6 +564,15 @@ def main(hparam):
     # init sub- and master- problem
     sp = SubProblem(hparam, loss, data)
     mp = MasterProblem(hparam, loss, data, sp)
+
+    #  mp.dict_lrs = unpickle_object('dict_lrs.pkl')
+    #  mp.dict_partialExp = unpickle_object('dict_partialExp.pkl')
+    #  mp.dict_segments = unpickle_object('dict_segments.pkl')
+    #  mp.dict_MUs = unpickle_object('mp_dict_MUs.pkl')
+    #  mp.optim.global_step = unpickle_object('global_step.pkl')
+    #  pdb.set_trace()
+    #  save_result(mp)
+    #  pdb.set_trace()
 
     # master and sp loop 
     nb_apertures = 0

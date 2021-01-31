@@ -60,16 +60,22 @@ class BaseOptions():
         parser.add_argument('--net_output_shape', default='', type=str, help='net output shape')
     
         # evaluation parameters
+        parser.add_argument('--gamma_plot_neuralDose', action="store_true")
+        parser.add_argument('--gamma_plot_original', action="store_true")
+
         parser.add_argument('--NeuralDosePlan', action="store_true")
+        parser.add_argument('--neuralDoseMCPlan', action="store_true")
+        parser.add_argument('--originalPBPlan', action="store_true")
+        parser.add_argument('--originalMCPlan', action="store_true")
+
+        parser.add_argument('--MCPlan', action="store_true")
         parser.add_argument('--TPSFluenceOptimPlan', action="store_true")
         parser.add_argument('--FluenceOptimPlan', action="store_true")
         parser.add_argument('--CGDeposPlan', action="store_true")
-        parser.add_argument('--MCPlan', action="store_true")
         parser.add_argument('--MCJYPlan', action="store_true")
         parser.add_argument('--MCMURefinedPlan', action="store_true")
         parser.add_argument('--consider_organs', nargs='+', help='only consider these organs')
         parser.add_argument('--CGDeposPlan_doseScale', default=1.0, type=float, help='dose scale for column gen depos plan')
-        parser.add_argument('--cal_gamma', action="store_true")
 
         self.parser = parser
 

@@ -465,5 +465,5 @@ class Geometry():
         gs = float(gs) * 10  # cm -> mm
         doseGrid_spacing = np.array([gs, gs, self.CT.spacing[-1]]) # juyao give this setting
         self.doseGrid = OrderedBunch({'spacing': doseGrid_spacing,
-                                      'size': (self.CT.size * self.CT.spacing / doseGrid_spacing).astype(np.int),
+                                      'size': (self.CT.size * self.CT.spacing / doseGrid_spacing),
                                       })

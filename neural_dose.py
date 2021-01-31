@@ -23,11 +23,11 @@ from io import StringIO
 from pathlib import Path
 import pandas as pd
 
+from neuralDose.utils import MyModelCheckpoint
 from utils import *
 from data import Geometry 
 from neuralDose.net.Unet3D import UNet3D 
 from neuralDose.data.datamodule import Transform 
-from neuralDose.utils import MyModelCheckpoint
 
 
 class PencilBeam():
