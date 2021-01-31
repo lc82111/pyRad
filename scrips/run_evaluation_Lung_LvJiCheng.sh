@@ -10,18 +10,22 @@ set -ex
   #--organ_filter PTV-smallupper PGTV-plan R1.5 Extended_PTV peripheral_tissue \
   #--TPSFluenceOptimPlan \
 
+  #--ckpt_path './pyRad/neuralDose/lightning_logs/version_4/epoch=347-val_loss=0.00003148.ckpt_interval.ckpt' \
+
   #--NeuralDosePlan \
   #--neuralDoseMCPlan \
   #--originalMCPlan \
   #--originalPBPlan \
   #--gamma_plot_original \
+  # --gamma_plot_neuralDose \
 
 python ./pyRad/evaluation.py \
-  --gamma_plot_neuralDose \
+  --NeuralDosePlan \
+  --neuralDoseMCPlan \
   --patient_ID Lung_LvJiCheng_Pa38Plan30Rx31GPU_neuralDose \
   --net Unet3D \
   --data_dir /mnt/ssd/tps_optimization/patients_data/Lung_LvJiCheng_Pa38Plan30Rx31GPU_skin/pbmcDoses_npz_Interp \
-  --ckpt_path './pyRad/neuralDose/lightning_logs/version_4/epoch=347-val_loss=0.00003148.ckpt_interval.ckpt' \
+  --ckpt_path './pyRad/neuralDose/lightning_logs/version_2/epoch=347-val_loss=0.00003148.ckpt_interval.ckpt' \
   --norm_type 'GroupNorm' \
   --num_depth 64 \
   --exp_name 20210130 \

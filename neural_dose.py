@@ -110,7 +110,7 @@ class PencilBeam():
         ''' turn 1D dose to 3D and interp the 3D dose
         return: 3D dose (1, 1, D//2, H=256, W=256) '''
         D, H, W = self.hparam.MCDose_shape 
-        doseGrid_shape = self.geometry.doseGrid.size.tolist()[::-1]
+        doseGrid_shape = self.geometry.doseGrid.size.astype(np.int).tolist()[::-1]
         dose = torch.zeros(doseGrid_shape, dtype=torch.float32, device=self.hparam.device)  # 3D dose @ doseGrid size
         dose[self.doseGrid_zz_yy_xx] = vector_dose  # index vector_dose to 3D dose
         dose = torch.nn.functional.interpolate(dose.view([1,1]+doseGrid_shape), size=(D//2,H,W), mode='trilinear', align_corners=False)  # interpolate only support 5D input
