@@ -144,7 +144,7 @@ class NeuralDose():
         self.CTs = torch.tensor(CTs, dtype=torch.float32, device=hparam.device)
         
         self.pbmcDoses_opened = []
-        for fn in list(braceexpand(str(data_dir.joinpath('mcpbDose_{1..6}000000.npz')))):  # these npz are generated from the whole-opened leaf pairs
+        for fn in list(braceexpand(str(data_dir.joinpath('mcpbDose_{1..%s}000000.npz'%data.num_beams)))):  # these npz are generated from the whole-opened leaf pairs
             self.pbmcDoses_opened.append(load_npz(fn)['mcDose'])  # npz containing multiple keys cannot be accessed in parallel
 
         self.pbmcDoses_opened = np.stack(self.pbmcDoses_opened, axis=0) # (beam, D, H, W)
