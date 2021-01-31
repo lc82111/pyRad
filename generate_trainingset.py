@@ -378,7 +378,7 @@ class GenerateTrainSet():
         pbDose = self.pb.get_unit_pencilBeamDose(beam_id, torch.tensor(seg.flatten(), dtype=torch.float32, device=self.hparam.device))
         pbDose = to_np(pbDose)  # (D=61,H=128,W=128)
 
-        test_plot(f'self.hparam.patient_ID', CTs, mcDose, pbDose)
+        test_plot(f'{self.hparam.patient_ID}', CTs, mcDose, pbDose)
 
         print(f'test plot done')
 
