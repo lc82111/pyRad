@@ -312,6 +312,17 @@ class Optimization():
                                 print(l,r)
                             assert l != r
 
+                    # check each row
+                    _row = to_np(dict_segments[i])[:,j][k*W:k*W+W]
+                    l,r = dict_lrs[i][j,k]; r -= 1 # new l r
+                    tmp = np.ones_like(_row)
+                    tmp[l] = 0; tmp[r] = 0
+                    _row = _row * tmp 
+                    if scipy_label(_row)[-1] != 1 and scipy_label(_row)[-1] != 0:  # ensure only zero or one connected component in a row
+                        cprint('[Error] multiple non-zero connected components in one row.')
+                        pdb.set_trace()
+                        print(_row)
+
     def _get_partial_exposure_tensor(self, lrs, seg, bixels_shape):
         '''
         Set partial exposed (pe) variable tensors for optimization, and modify the segment elements corresponding the pes. 
@@ -527,7 +538,6 @@ def save_result(mp):
             for j, lr in enumerate(aperture):  # for each row
                 if scipy_label(seg[j*W:j*W+W, i])[-1] != 1 and scipy_label(seg[j*W:j*W+W, i])[-1] != 0:  # ensure only zero or one connected component in a row
                     cprint('[Error] 2 non-zero connected components in one row.')
-                    pdb.set_trace()
                     print(seg[j*W:j*W+W, i])
                 [l, r] = lr
                 l_pe, r_pe = sigmoid(pes[i, j])

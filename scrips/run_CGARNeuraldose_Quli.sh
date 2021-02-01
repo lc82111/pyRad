@@ -14,7 +14,7 @@ python3 ./pyRad/columnGen_apertureRefine_NeuralDose.py \
   --net_output_shape 51,128,128 \
   --MCDose_shape 102,256,256 \
   --patient_ID Lung_QuLi_neuralDose \
-  --exp_name 20210131_test \
+  --exp_name 20210131_2 \
   --nb_apertures 5 \
   --master_steps 1500 \
   --learning_rate 0.01 \

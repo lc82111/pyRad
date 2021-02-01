@@ -28,10 +28,10 @@ from pytorch_lightning.callbacks import Callback, ModelCheckpoint, EarlyStopping
 
 def assert_single_connected_components(segs, h, w):
     '''segs: (#bxiels, #aperture)'''
-    for seg in segs.T: # each aperture
-        for row in seg.reshape(h,w):  # each row 
+    for aper_idx, seg in enumerate(segs.T): # each aperture
+        for row_idx, row in enumerate(seg.reshape(h,w)):  # each row 
             if scipy_label(row)[-1] != 1 and scipy_label(row)[-1] != 0:
-                cprint('[Error] 2 non-zero connected components in one row.')
+                cprint(f'[Error] aper={aper_idx},row={row_idx}. Multiple non-zero connected components in one row.')
                 pdb.set_trace()
                 print(row)
 
