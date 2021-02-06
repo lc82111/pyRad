@@ -20,18 +20,18 @@ set -ex
   #--gamma_plot_neuralDose \
 
 python ./pyRad/evaluation.py \
-  --gamma_plot_original \
-  --originalMCPlan \
-  --originalPBPlan \
-  --patient_ID Lung_QuLi_neuralDose \
+  --NeuralDosePlan \
+  --neuralDoseMCPlan \
+  --gamma_plot_neuralDose \
+  --patient_ID Lung_Zhengyurui_neuralDose \
   --net Unet3D \
-  --data_dir /mnt/ssd/tps_optimization/patients_data/Lung_QuLi_skin/pbmcDoses_npz_Interp \
-  --ckpt_path './pyRad/neuralDose/lightning_logs/version_3/epoch=199-val_loss=0.00002720.ckpt_interval.ckpt' \
+  --data_dir /mnt/ssd/tps_optimization/patients_data/Lung_Zhengyurui_skin/pbmcDoses_npz_Interp \
+  --ckpt_path './pyRad/neuralDose/lightning_logs/version_6/epoch=249-val_loss=0.00003452.ckpt_interval.ckpt' \
   --norm_type 'GroupNorm' \
   --num_depth 64 \
-  --exp_name 20210131 \
-  --MCDose_shape 102,256,256 \
-  --net_output_shape 51,128,128 \
+  --exp_name 202100202 \
+  --MCDose_shape 86,256,256 \
+  --net_output_shape 43,128,128 \
   --nb_apertures 6 \
-  --consider_organs 'Spinalcord+5mm' 'pGTV'  'Ring 1'  'Esophagu' \
+  --consider_organs 'PTV_plan' 'Esophagus' 'peripheral_tissue' 'Spinal canal' 'Lung_R' 'Lung_L' \
   --device cpu \

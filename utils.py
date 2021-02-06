@@ -97,8 +97,7 @@ def load_DICOM_dose(fn, geometry, MCDose_shape):
     dp = dicomparser.DicomParser(fn)
     dp.ds.file_meta.TransferSyntaxUID = pydicom.uid.ImplicitVRLittleEndian
     dose = dp.ds.pixel_array * float(dp.GetDoseData()['dosegridscaling']) * 100  # cGY
-
-    dose_H, dose_W, dose_D = geometry.doseGrid.size
+    dose_H, dose_W, dose_D = geometry.doseGrid.size.astype(np.int)
     assert dose.shape == (dose_D, dose_H, dose_W)
 
     D,H,W = MCDose_shape

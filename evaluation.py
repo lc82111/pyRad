@@ -123,33 +123,13 @@ class Evaluation():
             make_dir(dpm_result_path )
             return unit_dose
 
-    def gamma_plot_neuralDose_and_MCDose(self, is_plot=True):
-        mc_dose = self.load_MonteCarlo_OrganDose(self.optimized_MUs, 'MonteCarloDose')['skin_dose']
-        tmp = self.load_NeuralDose_OrganDose('neuralDose')
-        nr_dose = tmp['skin_dose'] 
-        pb_dose = tmp['skin_pencilBeamDose']
-        prescription_dose = self.geometry.plan.target_prescription_dose
-        mask = self.data.organ_masks['PTV']
-
-        D,H,W = self.hparam.net_output_shape
-        gamma = Gamma(gDPM_config_path=f'/mnt/win_share/{self.hparam.patient_ID}/templates/gDPM_config.json', shape=(H,W,D))
-        gammas = OrderedBunch({'pencilBeam':[], 'pred':[]}) 
-
-        nrGamma, pbGamma, nr_pass, pb_pass = gamma.get_gamma(dose_ref=to_np(mc_dose), dose_pred=to_np(nr_dose), dose_pencilBeam=to_np(pb_dose))
-        if is_plot:
-            fig_save_path = self.save_path.joinpath(f'total_dose')
-            make_dir(fig_save_path)
-            gamma_plot(self.neuralDose.CTs, mask, to_np(mc_dose), to_np(pb_dose), to_np(nr_dose), pbGamma, nrGamma, fig_save_path, prescription_dose)
-
-        cprint('gamma_plot done.', 'green')
-
     def gamma_plot_neuralDose(self, is_plot=True):
         mc_dose = self.load_MonteCarlo_OrganDose(self.optimized_MUs, 'MonteCarloDose')['skin_dose']
         tmp = self.load_NeuralDose_OrganDose('neuralDose')
         nr_dose = tmp['skin_dose'] 
         pb_dose = tmp['skin_pencilBeamDose']
         prescription_dose = self.geometry.plan.target_prescription_dose
-        mask = self.data.organ_masks['PTV-hole']
+        mask = self.data.organ_masks['PTV_plan']
 
         D,H,W = self.hparam.net_output_shape
         gamma = Gamma(gDPM_config_path=f'/mnt/win_share/{self.hparam.patient_ID}/templates/gDPM_config.json', shape=(H,W,D))
@@ -157,7 +137,7 @@ class Evaluation():
 
         nrGamma, pbGamma, nr_pass, pb_pass = gamma.get_gamma(dose_ref=to_np(mc_dose), dose_pred=to_np(nr_dose), dose_pencilBeam=to_np(pb_dose))
         if is_plot:
-            fig_save_path = self.save_path.joinpath(f'total_dose')
+            fig_save_path = self.save_path.joinpath(f'total_dose_neuralDose')
             make_dir(fig_save_path)
             gamma_plot(self.neuralDose.CTs, mask, to_np(mc_dose), to_np(pb_dose), to_np(nr_dose), pbGamma, nrGamma, fig_save_path, prescription_dose)
 
@@ -167,7 +147,7 @@ class Evaluation():
         mc_dose = self.load_originalMC_OrganDose('pbMonteCarloDose')['skin_dose']
         pb_dose = self.load_originalPB_OrganDose('pbDose')['skin_dose']
         prescription_dose = self.geometry.plan.target_prescription_dose
-        mask = self.data.organ_masks['PTV-hole']
+        mask = self.data.organ_masks['PTV_plan']
 
         D,H,W = self.hparam.net_output_shape
         gamma = Gamma(gDPM_config_path=f'./patients_data/Lung_LvJiCheng_Pa38Plan30Rx31GPU_neuralDose/dataset/gDPM_config.json', shape=(H,W,D))
@@ -175,7 +155,7 @@ class Evaluation():
 
         pb_pass, pbGamma = gamma.get_a_gamma(dose_ref=to_np(mc_dose), dose_pred=to_np(pb_dose))
         if is_plot:
-            fig_save_path = self.save_path.joinpath(f'total_dose')
+            fig_save_path = self.save_path.joinpath(f'total_dose_original')
             make_dir(fig_save_path)
             gamma_plot(self.neuralDose.CTs, mask, to_np(mc_dose), to_np(pb_dose), to_np(pb_dose), pbGamma, pbGamma, fig_save_path, prescription_dose)
 
