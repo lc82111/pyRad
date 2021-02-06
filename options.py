@@ -150,7 +150,7 @@ class BaseOptions():
                 hparam['skin_valid_ray_file'] = fn
                 continue
             else:
-                cprint(f'ValidMatrix.txt should have name original_validRay.txt or skin_ValidRay.txt!', 'red')
+                cprint(f'ValidMatrix.txt should have name ValidMatrix_skin.txt or ValidMatrix_original.txt!', 'red')
                 raise ValueError
 
         # dicom dir
