@@ -418,7 +418,8 @@ class Optimization():
 
             # optim
             optimizer.step() # do gradient decent w.r.t MU and partialExp
-            self._step_lrs_segments(dict_partialExp, dict_lrs, dict_segments) # ajust leafs position in place: dict_segments and dict_lrs
+            if not self.hparam.not_use_apertureRefine:
+                self._step_lrs_segments(dict_partialExp, dict_lrs, dict_segments) # ajust leafs position in place: dict_segments and dict_lrs
             check_beam(dict_segments, dict_lrs, self.data)
             scheduler.step() # adjust learning rate
 
