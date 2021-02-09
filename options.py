@@ -69,6 +69,8 @@ class BaseOptions():
         parser.add_argument('--originalPBPlan', action="store_true")
         parser.add_argument('--originalMCPlan', action="store_true")
 
+        parser.add_argument('--PTV_name', default='', type=str, help='ptv name')
+
         parser.add_argument('--MCPlan', action="store_true")
         parser.add_argument('--TPSFluenceOptimPlan', action="store_true")
         parser.add_argument('--FluenceOptimPlan', action="store_true")

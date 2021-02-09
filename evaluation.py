@@ -129,7 +129,7 @@ class Evaluation():
         nr_dose = tmp['skin_dose'] 
         pb_dose = tmp['skin_pencilBeamDose']
         prescription_dose = self.geometry.plan.target_prescription_dose
-        mask = self.data.organ_masks['PTV_plan']
+        mask = self.data.organ_masks[self.hparam.PTV_name]
 
         D,H,W = self.hparam.net_output_shape
         gamma = Gamma(gDPM_config_path=f'/mnt/win_share/{self.hparam.patient_ID}/templates/gDPM_config.json', shape=(H,W,D))
@@ -147,7 +147,7 @@ class Evaluation():
         mc_dose = self.load_originalMC_OrganDose('pbMonteCarloDose')['skin_dose']
         pb_dose = self.load_originalPB_OrganDose('pbDose')['skin_dose']
         prescription_dose = self.geometry.plan.target_prescription_dose
-        mask = self.data.organ_masks['PTV_plan']
+        mask = self.data.organ_masks[self.hparam.PTV_name]
 
         D,H,W = self.hparam.net_output_shape
         gamma = Gamma(gDPM_config_path=f'./patients_data/Lung_LvJiCheng_Pa38Plan30Rx31GPU_neuralDose/dataset/gDPM_config.json', shape=(H,W,D))
