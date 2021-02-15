@@ -6,6 +6,7 @@ from braceexpand import braceexpand
 from scipy.ndimage.measurements import label 
 from orderedbunch import OrderedBunch
 from scipy.ndimage import median_filter 
+from scipy.ndimage.measurements import label as scipy_label
 import numpy.random as npr
 import pandas as pd
 
@@ -22,6 +23,7 @@ from io import StringIO
 from pathlib import Path
 import pandas as pd
 
+from neuralDose.utils import MyModelCheckpoint
 from utils import *
 from data import Data
 from loss import Loss
@@ -30,8 +32,38 @@ from options import BaseOptions
 from neural_dose import PencilBeam
 from neuralDose.net.Unet3D import UNet3D 
 from neuralDose.data.datamodule import Transform 
-from neuralDose.utils import MyModelCheckpoint
 from neural_dose import NeuralDose
+
+def check_row(_row, l, r, beam_id, apt_idx, row_idx):
+    # check each row
+    W = len(_row)
+    if l>0 and _row[l-1] != 0:
+        cprint(f'[Error 1] beam_id{beam_id} apt_idx{apt_idx} row_idx{row_idx} multiple non-zero connected components in one row.')
+        pdb.set_trace()
+        print(_row)
+    if r<W and _row[r] != 0:
+        cprint(f'[Error 2] beam_id{beam_id} apt_idx{apt_idx} row_idx{row_idx} multiple non-zero connected components in one row.')
+        pdb.set_trace()
+        print(_row)
+    r -= 1 # new l r
+    tmp = np.ones_like(_row)
+    tmp[l] = 0; tmp[r] = 0
+    _row = _row * tmp 
+    if scipy_label(_row)[-1] != 1 and scipy_label(_row)[-1] != 0:  # ensure only zero or one connected component in a row
+        cprint(f'[Error 3] beam_id{beam_id} apt_idx{apt_idx} row_idx{row_idx} multiple non-zero connected components in one row.')
+        pdb.set_trace()
+        print(_row)
+
+def check_beam(dict_segments, dict_lrs, data):
+    for beam_id, seg in dict_segments.items():
+        if isinstance(seg, torch.Tensor):
+            seg = to_np(seg)
+        H, W = data.dict_bixelShape[beam_id]
+        for i in range(seg.shape[-1]):  # aperture
+            for j in range(H):  # row
+                row = seg[j*W:j*W+W, i]
+                l, r = dict_lrs[beam_id][i,j]
+                check_row(row, l, r, beam_id, i, j)
 
 
 def _smallest_contiguous_sum_2d(grad_map):
@@ -249,6 +281,7 @@ class Optimization():
             modified dict_lrs, dict_segments
         '''
         with torch.no_grad():  # see: https://discuss.pytorch.org/t/layer-weight-vs-weight-data/24271
+            _dict_partialExp, _dict_lrs, _dict_segments = dict_partialExp.copy(), dict_lrs.copy(), dict_segments.copy()
             for i, lrs in dict_lrs.items(): # each beam i
                 H, W = self.data.dict_bixelShape[i]
                 for j, alrs in enumerate(lrs): # each aperture j
@@ -310,6 +343,9 @@ class Optimization():
                                 pdb.set_trace()
                                 print(l,r)
                             assert l != r
+
+        # check 
+        check_beam(dict_segments, dict_lrs, self.data)
 
     def _get_partial_exposure_tensor(self, lrs, seg, bixels_shape):
         '''
@@ -382,7 +418,9 @@ class Optimization():
 
             # optim
             optimizer.step() # do gradient decent w.r.t MU and partialExp
-            self._step_lrs_segments(dict_partialExp, dict_lrs, dict_segments) # ajust leafs position in place: dict_segments and dict_lrs
+            if not self.hparam.not_use_apertureRefine:
+                self._step_lrs_segments(dict_partialExp, dict_lrs, dict_segments) # ajust leafs position in place: dict_segments and dict_lrs
+            check_beam(dict_segments, dict_lrs, self.data)
             scheduler.step() # adjust learning rate
 
             # ckpt and early stop 
@@ -398,13 +436,15 @@ class Optimization():
             self.min_loss, self.patience = loss, 0
             self.best_loss = loss
             self.best_dict_MUs, self.best_dict_segments, self.best_dict_lrs, self.best_dict_partialExp = OrderedBunch(), OrderedBunch(), OrderedBunch(), OrderedBunch() # NOTE: use [OrderedBunch,]*4 will mix best_dict_segments and best_dict_lrs. I donot know why
-            for beam_id, lrs in dict_lrs.items():  # for each beam
+            for beam_id in dict_lrs.keys():  # for each beam
                 self.best_dict_MUs[beam_id]        = to_np(dict_MUs[beam_id])
                 self.best_dict_segments[beam_id]   = to_np(dict_segments[beam_id])
                 self.best_dict_partialExp[beam_id] = to_np(dict_partialExp[beam_id])
-                self.best_dict_lrs[beam_id]        = lrs
+                self.best_dict_lrs[beam_id]        = dict_lrs[beam_id].copy()  # NOTE: otherwise, best_lrs will be update when dict_lrs change.
             # grad of fluence or segment
             self.best_dict_gradMap = get_segment_grad(dict_segments, self.data.dict_rayBoolMat_original)
+
+        check_beam(self.best_dict_segments, self.best_dict_lrs, self.data)
 
         # early stop
         if np.round(loss, precision) >= np.round(self.min_loss, precision): self.patience += 1
@@ -529,7 +569,10 @@ def save_result(mp):
         '''
         for i, aperture in enumerate(lrs):  # for each aperture
             for j, lr in enumerate(aperture):  # for each row
-                assert label(seg[j*W:j*W+W, i])[1] <=1  # ensure only zero or one connected component in a row
+                if scipy_label(seg[j*W:j*W+W, i])[-1] != 1 and scipy_label(seg[j*W:j*W+W, i])[-1] != 0:  # ensure only zero or one connected component in a row
+                    cprint(f'[Error] aper={i},row={j}. Multiple non-zero connected components in one row.')
+                    pdb.set_trace()
+                    print(seg[j*W:j*W+W, i])
                 [l, r] = lr
                 l_pe, r_pe = sigmoid(pes[i, j])
                 # close hopeless bixel?
@@ -552,7 +595,7 @@ def save_result(mp):
         seg = _modulate_segment_with_partialExposure(seg, lrs, pes)
         assert_single_connected_components(seg, H, W)
 
-        results[beam_id] = {'MU': np.abs(MU), 'Seg': seg, 'lrs':lrs, 'PEs':pes, 'global_step':mp.optim.global_step} 
+        results[beam_id] = {'MU': np.abs(MU), 'Seg': seg, 'lrs':lrs, 'PEs':pes, 'global_step':mp.optim.global_step}
 
     if not os.path.isdir(hparam.optimized_segments_MUs_file_path):
         os.makedirs(hparam.optimized_segments_MUs_file_path)
@@ -569,6 +612,12 @@ def main(hparam):
     # init sub- and master- problem
     sp = SubProblem(hparam, loss, data)
     mp = MasterProblem(hparam, loss, data, sp)
+
+    #  pdb.set_trace()
+    #  mp.dict_segments, mp.dict_MUs, mp.dict_lrs, mp.dict_partialExp, mp.optim.global_step = unpickle_object('mp.pkl')
+    #  check_beam(mp.dict_segments, mp.dict_lrs, data)
+    #  save_result(mp)
+    #  pdb.set_trace()
 
     # master and sp loop 
     nb_apertures = 0

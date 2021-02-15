@@ -13,8 +13,8 @@ set -ex
   # --test_pbmcDoses \
 python ./pyRad/generate_trainingset.py \
   --mcpbDose2npz_Interp \
-  --patient_ID  Lung_LvJiCheng_Pa38Plan30Rx31GPU_skin \
+  --patient_ID  Lung_Liujinzhu_skin \
   --exp_name tmp \
-  --MCDose_shape 122,256,256 \
-  --net_output_shape 61,128,128 \
+  --MCDose_shape 102,256,256 \
+  --net_output_shape 51,128,128 \
   --winServer_nb_threads 12 \

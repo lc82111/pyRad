@@ -426,16 +426,17 @@ class Geometry():
         self.prints()
     
     def prints(self):
-        pp.pprint(f'CT info:       {dict(self.CT)}')
+        pp.pprint(f'CT info: {dict(self.CT)}')
         print()
         for k, v in self.plan.items():
             if 'beam_info' in k:
                 for _k, _v in v.items():
-                    pp.pprint(f'{_k} info : {dict(_v)}')
+                    pp.pprint(f'beam_{_k}: {dict(_v)}')
             else:
                 pp.pprint(f'{k} info : {v}')
         print()
         pp.pprint(f'doseGrid info:     {dict(self.doseGrid)}')
+        cprint(f'Pls confirm doseGrid spacing with juyao. ','red')
         print()
 
     def set_CT(self, data):
@@ -462,8 +463,7 @@ class Geometry():
     def set_doseGrid(self, data):
         gs = data.allOrganTable['ITV_skin']['Grid Size'] 
         gs = float(gs) * 10  # cm -> mm
-        doseGrid_spacing = np.array([gs, gs, 2.5]) # juyao give 2.5 to me in mm
-        cprint(f'juyao given doseGrid z spacing 2.5 ! pls confirm with juyao. ','red')
+        doseGrid_spacing = np.array([gs, gs, self.CT.spacing[-1]]) # juyao give this setting
         self.doseGrid = OrderedBunch({'spacing': doseGrid_spacing,
-                                      'size': (self.CT.size * self.CT.spacing / doseGrid_spacing).astype(np.int),
+                                      'size': (self.CT.size * self.CT.spacing / doseGrid_spacing),
                                       })

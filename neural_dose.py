@@ -23,11 +23,11 @@ from io import StringIO
 from pathlib import Path
 import pandas as pd
 
+from neuralDose.utils import MyModelCheckpoint
 from utils import *
 from data import Geometry 
 from neuralDose.net.Unet3D import UNet3D 
 from neuralDose.data.datamodule import Transform 
-from neuralDose.utils import MyModelCheckpoint
 
 
 class PencilBeam():
@@ -89,7 +89,8 @@ class PencilBeam():
             coord = [float(x) for x in line.split()]  # split uses dafault delimiter: space and \n 
             coords.append(coord)
         coords = np.asarray(coords)
-        assert len(coords) == self.data.get_pointNum_from_organName(self.roi_skinName)
+        if len(coords) != self.data.get_pointNum_from_organName(self.roi_skinName):
+            cprint('[Error] {len(coords)} != {self.data.get_pointNum_from_organName(self.roi_skinName)}')
 
         # sort pointPositions to ensure the consistent ordering with deposition.txt: z decending, y decending, x ascending  
         sort_index = np.lexsort((coords[:,0], -coords[:,1], -coords[:,2]))  # NOTE TODO: the PTVs have duplicate begin and end slices
@@ -109,7 +110,7 @@ class PencilBeam():
         ''' turn 1D dose to 3D and interp the 3D dose
         return: 3D dose (1, 1, D//2, H=256, W=256) '''
         D, H, W = self.hparam.MCDose_shape 
-        doseGrid_shape = self.geometry.doseGrid.size.tolist()[::-1]
+        doseGrid_shape = self.geometry.doseGrid.size.astype(np.int).tolist()[::-1]
         dose = torch.zeros(doseGrid_shape, dtype=torch.float32, device=self.hparam.device)  # 3D dose @ doseGrid size
         dose[self.doseGrid_zz_yy_xx] = vector_dose  # index vector_dose to 3D dose
         dose = torch.nn.functional.interpolate(dose.view([1,1]+doseGrid_shape), size=(D//2,H,W), mode='trilinear', align_corners=False)  # interpolate only support 5D input
@@ -143,7 +144,7 @@ class NeuralDose():
         self.CTs = torch.tensor(CTs, dtype=torch.float32, device=hparam.device)
         
         self.pbmcDoses_opened = []
-        for fn in list(braceexpand(str(data_dir.joinpath('mcpbDose_{1..6}000000.npz')))):  # these npz are generated from the whole-opened leaf pairs
+        for fn in list(braceexpand(str(data_dir.joinpath('mcpbDose_{1..%s}000000.npz'%data.num_beams)))):  # these npz are generated from the whole-opened leaf pairs
             self.pbmcDoses_opened.append(load_npz(fn)['mcDose'])  # npz containing multiple keys cannot be accessed in parallel
 
         self.pbmcDoses_opened = np.stack(self.pbmcDoses_opened, axis=0) # (beam, D, H, W)

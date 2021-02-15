@@ -28,6 +28,7 @@ class BaseOptions():
         parser.add_argument('--dense_deposition_matrix', action="store_true", help='not use sparse matrix to store deposition matrix')
 
         # optimization parameters
+        parser.add_argument('--not_use_apertureRefine', action="store_true")
         parser.add_argument('--optimization_continue', action="store_true")
         parser.add_argument('--steps', default=5000, type=int, help='iter number in fluence optim')
         parser.add_argument('--nb_apertures', default=10, type=int, help='the number of apertures in column generation')
@@ -60,16 +61,24 @@ class BaseOptions():
         parser.add_argument('--net_output_shape', default='', type=str, help='net output shape')
     
         # evaluation parameters
+        parser.add_argument('--gamma_plot_neuralDose', action="store_true")
+        parser.add_argument('--gamma_plot_original', action="store_true")
+
         parser.add_argument('--NeuralDosePlan', action="store_true")
+        parser.add_argument('--neuralDoseMCPlan', action="store_true")
+        parser.add_argument('--originalPBPlan', action="store_true")
+        parser.add_argument('--originalMCPlan', action="store_true")
+
+        parser.add_argument('--PTV_name', default='', type=str, help='ptv name')
+
+        parser.add_argument('--MCPlan', action="store_true")
         parser.add_argument('--TPSFluenceOptimPlan', action="store_true")
         parser.add_argument('--FluenceOptimPlan', action="store_true")
         parser.add_argument('--CGDeposPlan', action="store_true")
-        parser.add_argument('--MCPlan', action="store_true")
         parser.add_argument('--MCJYPlan', action="store_true")
         parser.add_argument('--MCMURefinedPlan', action="store_true")
         parser.add_argument('--consider_organs', nargs='+', help='only consider these organs')
         parser.add_argument('--CGDeposPlan_doseScale', default=1.0, type=float, help='dose scale for column gen depos plan')
-        parser.add_argument('--cal_gamma', action="store_true")
 
         self.parser = parser
 
@@ -144,7 +153,7 @@ class BaseOptions():
                 hparam['skin_valid_ray_file'] = fn
                 continue
             else:
-                cprint(f'ValidMatrix.txt should have name original_validRay.txt or skin_ValidRay.txt!', 'red')
+                cprint(f'ValidMatrix.txt should have name ValidMatrix_skin.txt or ValidMatrix_original.txt!', 'red')
                 raise ValueError
 
         # dicom dir

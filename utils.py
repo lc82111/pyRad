@@ -1,6 +1,8 @@
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import numpy as np
+from typing import Any, Dict, Optional, Union
+from pathlib import Path
 import os, copy, pydicom, math, glob
 from orderedbunch import OrderedBunch
 from socket import *
@@ -13,19 +15,25 @@ import SimpleITK as sitk
 from skimage import draw
 from scipy.ndimage.morphology import binary_fill_holes
 from skimage.measure import label,regionprops,find_contours
+from skimage.transform import resize, rotate 
+from dicompylercore import dicomparser
 
 from argparse import ArgumentParser
 from io import StringIO
 from shutil import copyfile
 import sys, collections, shutil, pdb, pickle, datetime
 
-import torch
+import torch, torchvision
+from pytorch_lightning.callbacks import Callback, ModelCheckpoint, EarlyStopping, LearningRateMonitor
 
 def assert_single_connected_components(segs, h, w):
     '''segs: (#bxiels, #aperture)'''
-    for seg in segs.T: # each aperture
-        for row in seg.reshape(h,w):  # each row 
-            assert scipy_label(row)[-1] == 1
+    for aper_idx, seg in enumerate(segs.T): # each aperture
+        for row_idx, row in enumerate(seg.reshape(h,w)):  # each row 
+            if scipy_label(row)[-1] != 1 and scipy_label(row)[-1] != 0:
+                cprint(f'[Error] aper={aper_idx},row={row_idx}. Multiple non-zero connected components in one row.')
+                pdb.set_trace()
+                print(row)
 
 def get_now_time():
     now = datetime.datetime.now()
@@ -34,13 +42,13 @@ def get_now_time():
 def sigmoid(x):
     return 1 / (1 + np.exp(-x))
 
-def pickle_object(title, data):
-    pikd = open(title, 'wb')
+def pickle_object(filename, data):
+    pikd = open(filename, 'wb')
     pickle.dump(data, pikd, protocol=4)
     pikd.close()
 
-def unpickle_object(file):
-    pikd = open(file, 'rb')
+def unpickle_object(filename):
+    pikd = open(filename, 'rb')
     data = pickle.load(pikd)
     pikd.close()
     return data
@@ -85,16 +93,20 @@ def parse_MonteCarlo_dose(MCDose, data):
         dict_organ_dose[organ_name] = MCDose[msk]
     return dict_organ_dose 
 
-def load_DICOM_dose(fn): 
+def load_DICOM_dose(fn, geometry, MCDose_shape): 
     dp = dicomparser.DicomParser(fn)
     dp.ds.file_meta.TransferSyntaxUID = pydicom.uid.ImplicitVRLittleEndian
     dose = dp.ds.pixel_array * float(dp.GetDoseData()['dosegridscaling']) * 100  # cGY
-    assert dp.GetDoseData()['rows'] == 300
-    assert dp.GetDoseData()['columns'] == 300
+    dose_H, dose_W, dose_D = geometry.doseGrid.size.astype(np.int)
+    assert dose.shape == (dose_D, dose_H, dose_W)
+
+    D,H,W = MCDose_shape
+    dose = resize(dose, (D//2,H,W), order=3, mode='constant', cval=0, clip=False, preserve_range=True, anti_aliasing=True)
+    dose = np.where(dose<0, 0, dose)  # bicubic(order=3) resize may create negative values
+    dose = center_crop(dose)
     return dose
 
-
-def center_crop(self, ndarray, size=128):
+def center_crop(ndarray, size=128):
     tensor = torch.tensor(ndarray, dtype=torch.float32)
     tensor = torchvision.transforms.CenterCrop(size)(tensor)
     return tensor.cpu().numpy().astype(np.float32)
@@ -835,11 +847,81 @@ class UIDs():
         for fn in dpm_results_fns:  
             uid = fn.strip('dpm_results_').strip('Ave.data')
             if not self.in_npz_uids(uid): uids.append(uid)
-        print(f'following uids will be convert {uids}')
+        print(f'following uids on winServer will be used: {uids}')
         return uids
 
-def test_plot(uid, CTs, mcDose, pbDose):
-    save_path = f'/tmp/{get_now_time()}' 
+
+class MyModelCheckpoint(ModelCheckpoint):
+    '''
+    implemente the saving ckpt at every n epoch, by overload the save_checkpoint method of base class ModelCheckpoint. 
+    '''
+    def __init__(
+        self,
+        filepath: Optional[str] = None,
+        monitor: Optional[str] = None,
+        verbose: bool = False,
+        save_last: Optional[bool] = None,
+        save_top_k: Optional[int] = None,
+        save_weights_only: bool = False,
+        mode: str = "auto",
+        period: int = 1,
+        prefix: str = "",
+        dirpath: Optional[Union[str, Path]] = None,
+        filename: Optional[str] = None,
+        save_ckpt_interval: int = 1,  # saving ckpt at every n epoch
+    ):
+        super().__init__(filepath, monitor, verbose, save_last, save_top_k, save_weights_only, mode, period, prefix)
+        self.save_ckpt_interval = save_ckpt_interval 
+
+    def save_checkpoint(self, trainer, pl_module):
+        """
+        Performs the main logic around saving a checkpoint.
+        This method runs on all ranks, it is the responsibility of `self.save_function`
+        to handle correct behaviour in distributed training, i.e., saving only on rank 0.
+        """
+        epoch = trainer.current_epoch
+        global_step = trainer.global_step
+        if (
+            self.save_top_k == 0  # no models are saved
+            or self.period < 1  # no models are saved
+            or (epoch + 1) % self.period  # skip epoch
+            or trainer.running_sanity_check  # don't save anything during sanity check
+            or self.last_global_step_saved == global_step  # already saved at the last step
+        ):
+            return
+
+        self._add_backward_monitor_support(trainer)
+        self._validate_monitor_key(trainer)
+
+        # track epoch when ckpt was last checked
+        self.last_global_step_saved = global_step
+
+        # what can be monitored
+        monitor_candidates = self._monitor_candidates(trainer)
+
+        # ie: path/val_loss=0.5.ckpt
+        filepath = self._get_metric_interpolated_filepath_name(epoch, monitor_candidates)
+
+        # callback supports multiple simultaneous modes
+        # here we call each mode sequentially
+        # Mode 1: save all checkpoints OR only the top k
+        if self.save_top_k:
+            self._save_top_k_checkpoints(monitor_candidates, trainer, pl_module, epoch, filepath)
+
+        # Mode 2: save the last checkpoint
+        self._save_last_checkpoint(trainer, pl_module, epoch, monitor_candidates, filepath)
+
+        # Mode 3: save the checkpoint at interval
+        if epoch % self.save_ckpt_interval == 0: 
+            self._save_ckpt_interval(trainer, pl_module, monitor_candidates, filepath)
+
+    def _save_ckpt_interval(self, trainer, pl_module, ckpt_name_metrics, filepath):
+        filepath = os.path.join(self.dirpath, f"{filepath}_interval.ckpt")
+        if self.verbose: rank_zero_info(f"Epoch {trainer.current_epoch}: saving model to {filepath}")
+        self._save_model(filepath, trainer, pl_module)
+
+def test_plot(PID, CTs, mcDose, pbDose):
+    save_path = f'/tmp/{PID}/{get_now_time()}' 
     make_dir(save_path)
     for i, (ct, md, pd) in enumerate(zip(CTs, mcDose, pbDose)): 
         figs, axes = plt.subplots(1, 2, figsize=(2*10, 1*10))
