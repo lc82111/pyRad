@@ -29,6 +29,7 @@ class BaseOptions():
 
         # optimization parameters
         parser.add_argument('--not_use_apertureRefine', action="store_true")
+        parser.add_argument('--not_use_NeuralDose', action="store_true")
         parser.add_argument('--optimization_continue', action="store_true")
         parser.add_argument('--steps', default=5000, type=int, help='iter number in fluence optim')
         parser.add_argument('--nb_apertures', default=10, type=int, help='the number of apertures in column generation')

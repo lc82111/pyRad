@@ -16,7 +16,7 @@ import torch.nn.functional as torchF
 from torch.utils.tensorboard import SummaryWriter
 import torchvision.transforms as transforms
 
-import os, pdb, sys, pickle
+import os, pdb, sys, pickle, time
 from argparse import ArgumentParser
 from termcolor import colored, cprint
 from io import StringIO
@@ -32,6 +32,7 @@ from neuralDose.data.datamodule import Transform
 
 class PencilBeam():
     def __init__(self, hparam, data, roi_skinName='ITV_skin'):
+        self.times = []
         self.hparam = hparam
         self.roi_skinName = roi_skinName 
         cprint(f'using skin name {roi_skinName} to parsing PointsPosition.txt; pls confirm the skin name is right', 'red')
@@ -126,7 +127,10 @@ class PencilBeam():
         Return:
             pbDose: tensor (D=61, H=128, W=128) 
         '''
+        t1 = time.time()
         pbDose = cal_dose(self.dict_deps[beam_id], segment) # cal unit dose (#dose_grid, )
+        t2 = time.time()
+        self.times.append(t2-t1)
         pbDose = pbDose[0:self.data.get_pointNum_from_organName('ITV_skin')]  # only consider the skin dose
         pbDose = self._parse_dose_torch(pbDose)  # 3D dose tensor 61x256x256
         pbDose = transforms.CenterCrop(128)(pbDose)  # 61x128x128
@@ -134,6 +138,7 @@ class PencilBeam():
 
 class NeuralDose():
     def __init__(self, hparam, data):
+        self.times  = []
         self.hparam = hparam
         self.data   = data
         self.net    = self.load_net()
@@ -151,8 +156,10 @@ class NeuralDose():
         self.pbmcDoses_opened = torch.tensor(self.pbmcDoses_opened, dtype=torch.float32, device=hparam.device)
 
         self.transform = Transform(hparam)
-   
-    def get_neuralDose_for_a_beam(self, beam_id, MUs, segs, mask, requires_pencilBeamDose=True):
+
+        self.unitNeuralDoses = {}
+
+    def get_neuralDose_for_a_beam(self, beam_id, MUs, segs, mask, requires_pencilBeamDose=True, is_first=True):
         '''Arguments:
                 MUs:  tensor (#apertures,)
                 segs: tensor (#bixels, #apertures), all rays including valid and non-valid rays
@@ -161,6 +168,39 @@ class NeuralDose():
                 neuralDose: tensor (D/2=61,H=centerCrop128,W=centerCrop128), non-unit neural dose 
                 pbDose:     tensor (D/2=61,H=centerCrop128,W=centerCrop128), non-unit pencil beam dose
         '''
+        beam_id = int(to_np(beam_id))
+        requires_pencilBeamDose = bool(to_np(requires_pencilBeamDose))
+        neuralDose, pbDose = 0, 0
+
+        if is_first:
+            self.unitNeuralDoses[beam_id] = {}
+        for i in range(segs.shape[-1]): # for each aperture
+            if is_first:
+                seg = segs[:,i][mask.flatten()]
+                unitNeuralDose, unitPBDose = self.get_neuralDose_for_an_aperture(seg, beam_id) # 3D unit dose (D,H,W)
+                self.unitNeuralDoses[beam_id][i] = unitNeuralDose.detach()
+            else:
+                unitNeuralDose = self.unitNeuralDoses[beam_id][i]
+
+            neuralDose += unitNeuralDose * MUs[i]  # x MU
+            if requires_pencilBeamDose:
+                pbDose += unitPBDose * MUs[i].detach()  # x MU
+        if requires_pencilBeamDose:
+            return neuralDose, pbDose 
+        else:
+            return neuralDose
+   
+    def get_neuralDose_for_a_beam_bak(self, beam_id, MUs, segs, mask, requires_pencilBeamDose=True):
+        '''Arguments:
+                MUs:  tensor (#apertures,)
+                segs: tensor (#bixels, #apertures), all rays including valid and non-valid rays
+                mask: tensor (h,w), hxw==#bixels, bool, 1 indicates valid ray 
+           Returns:
+                neuralDose: tensor (D/2=61,H=centerCrop128,W=centerCrop128), non-unit neural dose 
+                pbDose:     tensor (D/2=61,H=centerCrop128,W=centerCrop128), non-unit pencil beam dose
+        '''
+        beam_id = int(to_np(beam_id))
+        requires_pencilBeamDose = bool(to_np(requires_pencilBeamDose))
         assert isinstance(MUs,  torch.Tensor)
         assert isinstance(segs, torch.Tensor)
         assert isinstance(mask, torch.Tensor)
@@ -168,9 +208,11 @@ class NeuralDose():
         for i in range(segs.shape[-1]): # for each aperture
             seg = segs[:,i][mask.flatten()]
             unitNeuralDose, unitPBDose = self.get_neuralDose_for_an_aperture(seg, beam_id) # 3D unit dose (D,H,W)
-            neuralDose += unitNeuralDose * MUs[i].to('cpu')  # x MU
+            #  neuralDose += unitNeuralDose * MUs[i].to('cpu')  # x MU
+            neuralDose += unitNeuralDose * MUs[i]  # x MU
             if requires_pencilBeamDose:
-                pbDose += unitPBDose     * MUs[i].detach().to('cpu')  # x MU
+                #pbDose += unitPBDose * MUs[i].detach().to('cpu')  # x MU
+                pbDose += unitPBDose * MUs[i].detach()  # x MU
         if requires_pencilBeamDose:
             return neuralDose, pbDose 
         else:
@@ -197,11 +239,7 @@ class NeuralDose():
                     unitPBDose:     tensor (D/2,H=centerCrop128,W=centerCrop128), unit dose
                     unitNeuralDose: tensor (D/2,H=centerCrop128,W=centerCrop128), unit dose
         '''
-        # PencilBeam dose
-        # print(f'{self.dict_deps[beam_id].shape}----{segment.shape}')
-        #  unitPBDose = cal_dose(self.dict_deps[beam_id], segment) # cal unit dose (#dose_grid, )
-        #  unitPBDose = unitPBDose[0:self.data.get_pointNum_from_organName('ITV_skin')]  # only consider the skin dose
-        #  unitPBDose = self.PB._parse_dose_torch(unitPBDose)  # 3D dose 61x256x256
+        # unitPBDose
         unitPBDose = self.PB.get_unit_pencilBeamDose(beam_id, segment)  # 3D dose 61x128x128
 
         # net inputs
@@ -212,7 +250,11 @@ class NeuralDose():
 
         # forward throught net  # with torch.no_grad():
         with torch.cuda.amp.autocast():
-            unitNeuralDose = self.net(inputs.to('cpu'))
+            # unitNeuralDose = self.net(inputs.to('cpu'))
+            t1 = time.time()
+            unitNeuralDose = self.net(inputs)
+            t2 = time.time()
+            self.times.append(t2-t1)
         unitNeuralDose = torch.relu(unitNeuralDose.squeeze())
         unitNeuralDose = self.transform.strip_padding_depths(unitNeuralDose) # 1,61,128,128
         return unitNeuralDose, unitPBDose.detach() 
@@ -231,5 +273,6 @@ class NeuralDose():
 
         net.eval()
         for k, v in net.named_parameters(): v.requires_grad_(False)  # try to save memory
-        net.to('cpu')
+        #net.to('cpu')
+        net.to(self.hparam.device)
         return net
