@@ -193,6 +193,29 @@ class Evaluation():
 
         return OrderedBunch({'name': name, 'organ_dose':dict_organ_doses, 'skin_dose': neural_dose, 'skin_pencilBeamDose':pb_dose})
 
+    def load_NeuralDose_OrganDose(self, name):
+        cprint(f'neuralDose Plan uses following parameters:{self.hparam.optimized_segments_MUs_file_path}; {self.hparam.deposition_pickle_file_path}', 'yellow')
+
+        # compute neural dose
+        neural_dose, pb_dose = 0, 0
+        for beam_id, segs_mus in self.segs_mus.items(): # for each beam
+            mask = self.data.dict_rayBoolMat_skin[beam_id]   # (h, w), hxw==#bixels
+            segs, mus = segs_mus['Seg'], segs_mus['MU'] # (#bixels, #apertures), (#apertures)
+            mus  = mus / self.hparam.dose_scale  # x1000
+            segs = torch.tensor(segs, dtype=torch.float32, device=self.hparam.device)
+            mus  = torch.tensor(mus,  dtype=torch.float32, device=self.hparam.device)
+            mask = torch.tensor(mask, dtype=torch.bool,    device=self.hparam.device)
+            _neural_dose, _pb_dose = self.neuralDose.get_neuralDose_for_a_beam(beam_id, mus, segs, mask)
+            neural_dose += _neural_dose
+            pb_dose     += _pb_dose
+            assert tuple(neural_dose.shape) == self.hparam.net_output_shape
+            assert tuple(pb_dose.shape)     == self.hparam.net_output_shape
+
+        # get individual organ doses
+        dict_organ_doses   = parse_MonteCarlo_dose(neural_dose, self.data)
+
+        return OrderedBunch({'name': name, 'organ_dose':dict_organ_doses, 'skin_dose': neural_dose, 'skin_pencilBeamDose':pb_dose})
+
     def load_originalMC_OrganDose(self, name):
         fns = glob.glob(f'{self.hparam.DICOM_dir}/RTDOSE*原计划.dcm')
         assert len(fns) == 1
