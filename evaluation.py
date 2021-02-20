@@ -32,6 +32,7 @@ from loss import Loss
 from options import BaseOptions
 from monteCarlo import MonteCarlo
 from neural_dose import NeuralDose
+from pencil_beam import PencilBeam
 from neuralDose.utils import gamma_plot, MyModelCheckpoint
 from neuralDose.metrics import Gamma
 
@@ -39,35 +40,41 @@ from neuralDose.metrics import Gamma
 class Evaluation():
     def __init__(self, hparam):
         self.hparam = hparam
-
         # init data and loss
         self.data = Data(hparam)
         self.loss = Loss(hparam, self.data.allOrganTable)
         self.geometry = Geometry(self.data)
-
         # deposition matrix (#doseGrid, #bixels)
         self.deposition = convert_depoMatrix_to_tensor(self.data.deposition, self.hparam.device)
-        
-        # MC dose
-        if hparam.MCPlan or hparam.MCJYPlan or hparam.MCMURefinedPlan or hparam.NeuralDosePlan or hparam.gamma_plot_neuralDose:
-            self._set_optimized_segments_MUs()
-            self.mc = MonteCarlo(hparam, self.data)
-            self.unitMUDose = self.get_all_beams_MCdose_for_optimizedSegMUs()  # unitMUDose, ndarray (nb_beams*nb_apertures=30, D/2=61, H=CenterCrop128, W=CenterCrop128)
-
-        # neural dose 
-        self.neuralDose = NeuralDose(hparam, self.data)
-        
+        # gamma setting
+        D,H,W = self.hparam.net_output_shape
+        self.gm = Gamma(gDPM_config_path=f'/mnt/win_share/{self.hparam.patient_ID}/templates/gDPM_config.json', shape=(H,W,D))
         # results dir
         time_str = get_now_time()
         self.save_path = Path(self.hparam.evaluation_result_path, time_str)
         make_dir(self.save_path)
 
-        # gamma
-        if hparam.gamma_plot_original:
-            self.gamma_plot_original()
-        if hparam.gamma_plot_neuralDose:
-            self.gamma_plot_neuralDose()
+        # MC dose
+        if hparam.MCPlan or hparam.MCJYPlan or hparam.MCMURefinedPlan or hparam.NeuralDosePlan or hparam.PBPlan or hparam.originalPlan:
+            self._set_optimized_segments_MUs()
+            self.mc = MonteCarlo(hparam, self.data)
+            self.unitDose = self.get_all_beams_MCdose_for_optimizedSegMUs()  # unitDose, ndarray (nb_beams*nb_apertures=30, D/2=61, H=CenterCrop128, W=CenterCrop128)
+        
+        # pencil beam 
+        if hparam.PBPlan:
+            self.PB = PencilBeam(hparam, self.data)
+            self.gamma_plot_PB()
 
+        # neural dose 
+        if hparam.NeuralDosePlan:
+            self.PB = PencilBeam(hparam, self.data)
+            self.neuralDose = NeuralDose(hparam, self.data, self.PB)
+            self.gamma_plot_neuralDose()
+        
+        # original dose
+        if hparam.originalPlan:
+            self.gamma_plot_original()
+        
     def _set_optimized_segments_MUs(self):
         ''' Return: 
                 self.segs_mus: optimized segments and MUs {beam_id: {'Seg':Segs ndarray (hxw, nb_apertures), 'MU':MUs ndarray (nb_apertures,)}} 
@@ -89,6 +96,22 @@ class Evaluation():
             segs, mus = seg_mu['Seg'], seg_mu['MU']
             self.optimized_MUs[(beam_id-1)*self.nb_apertures : (beam_id-1)*self.nb_apertures+self.nb_apertures] = mus.reshape((self.nb_apertures,1,1,1))
             self.optimized_segs[beam_id] = segs.T.reshape(self.nb_apertures, H, W)
+
+    def _get_gamma(self, mc_dose, dict_doses):
+        ret = {} 
+        path = Path(self.hparam.evaluation_result_path)
+        for name, dose in dict_doses.items():
+            gamma_path = path.joinpath(f'{name}_gammaArr.pickle')
+            csv_path   = path.joinpath(f'{name}_gammaCSV.pickle')
+            if not os.path.isfile(gamma_path):
+                passRate, gammaArr = self.gm.get_a_gamma(dose_ref=to_np(mc_dose), dose_pred=to_np(dose))
+                pickle_object(gamma_path, gammaArr)
+                df = pd.DataFrame({'passRate':[passRate,]})
+                df.to_csv(csv_path)
+            else:
+                gammaArr = unpickle_object(gamma_path)
+            ret[name] = gammaArr
+        return ret
    
     def get_all_beams_MCdose_for_optimizedSegMUs(self):
         ''' Return: unit dose, ndarray (#beams*#apertures, D/2, H=centerCrop128, W=centerCrop128) '''
@@ -125,22 +148,27 @@ class Evaluation():
 
     def gamma_plot_neuralDose(self, is_plot=True):
         mc_dose = self.load_MonteCarlo_OrganDose(self.optimized_MUs, 'MonteCarloDose')['skin_dose']
-        tmp = self.load_NeuralDose_OrganDose('neuralDose')
-        nr_dose = tmp['skin_dose'] 
-        pb_dose = tmp['skin_pencilBeamDose']
+        pb_dose = self.load_penceilBeamDose_OrganDose('PB')['skin_dose']
+        nd_dose = self.load_NeuralDose_OrganDose('neuralDose')['skin_dose']
         prescription_dose = self.geometry.plan.target_prescription_dose
         mask = self.data.organ_masks[self.hparam.PTV_name]
-
-        D,H,W = self.hparam.net_output_shape
-        gamma = Gamma(gDPM_config_path=f'/mnt/win_share/{self.hparam.patient_ID}/templates/gDPM_config.json', shape=(H,W,D))
-        gammas = OrderedBunch({'pencilBeam':[], 'pred':[]}) 
-
-        nrGamma, pbGamma, nr_pass, pb_pass = gamma.get_gamma(dose_ref=to_np(mc_dose), dose_pred=to_np(nr_dose), dose_pencilBeam=to_np(pb_dose))
+        gammaArr = self._get_gamma(mc_dose, {'pb':pb_dose, 'nd':nd_dose})
         if is_plot:
             fig_save_path = self.save_path.joinpath(f'total_dose_neuralDose')
             make_dir(fig_save_path)
-            gamma_plot(self.neuralDose.CTs, mask, to_np(mc_dose), to_np(pb_dose), to_np(nr_dose), pbGamma, nrGamma, fig_save_path, prescription_dose)
+            gamma_plot(self.neuralDose.CTs, mask, to_np(mc_dose), to_np(pb_dose), to_np(nd_dose), gammaArr['pb'], gammaArr['nd'], fig_save_path, prescription_dose)
+        cprint(f'gamma_plot done. saved to{fig_save_path}', 'green')
 
+    def gamma_plot_PB(self, is_plot=True):
+        mc_dose = self.load_MonteCarlo_OrganDose(self.optimized_MUs, 'MonteCarloDose')['skin_dose']
+        pb_dose = self.load_penceilBeamDose_OrganDose('PB')['skin_dose']
+        prescription_dose = self.geometry.plan.target_prescription_dose
+        mask = self.data.organ_masks[self.hparam.PTV_name]
+        gammaArr = self.get_gamma(mc_dose, {'pb', pb_dose})
+        if is_plot:
+            fig_save_path = self.save_path.joinpath(f'total_dose_original')
+            make_dir(fig_save_path) 
+            gamma_plot(self.neuralDose.CTs, mask, to_np(mc_dose), to_np(pb_dose), to_np(pb_dose), gammaArr['pb'], gammaArr['Arr'], fig_save_path, prescription_dose)
         cprint(f'gamma_plot done. saved to{fig_save_path}', 'green')
 
     def gamma_plot_original(self, is_plot=True):
@@ -150,8 +178,7 @@ class Evaluation():
         mask = self.data.organ_masks[self.hparam.PTV_name]
 
         D,H,W = self.hparam.net_output_shape
-        gamma = Gamma(gDPM_config_path=f'./patients_data/Lung_LvJiCheng_Pa38Plan30Rx31GPU_neuralDose/dataset/gDPM_config.json', shape=(H,W,D))
-        gammas = OrderedBunch({'pencilBeam':[], 'pred':[]}) 
+        gamma = Gamma(gDPM_config_path=f'/mnt/win_share/{self.hparam.patient_ID}/templates/gDPM_config.json', shape=(H,W,D))
 
         pb_pass, pbGamma = gamma.get_a_gamma(dose_ref=to_np(mc_dose), dose_pred=to_np(pb_dose))
         if is_plot:
@@ -164,17 +191,17 @@ class Evaluation():
     def load_MonteCarlo_OrganDose(self, MUs, name, scale=1):
         ''' self.optimized_MUs: ndarray (#beams*#apertures, 1, 1, 1)  '''
         MUs = np.abs(MUs) / self.hparam.dose_scale  # x1000
-        dose = self.unitMUDose * MUs * scale  # unitMUDose, ndarray (nb_beams*nb_apertures=30, D/2=61, H=CenterCrop128, W=CenterCrop128) 
+        dose = self.unitDose * MUs * scale  # unitDose, ndarray (nb_beams*nb_apertures=30, D/2=61, H=CenterCrop128, W=CenterCrop128) 
         dose = dose.sum(axis=0, keepdims=False)  #  (D, H, W) 
         dose = torch.tensor(dose, dtype=torch.float32, device=self.hparam.device)
         dict_organ_doses = parse_MonteCarlo_dose(dose, self.data)  # parse organ_doses to obtain individual organ doses
         return OrderedBunch({'organ_dose':dict_organ_doses, 'skin_dose':dose, 'name':name})
 
     def load_NeuralDose_OrganDose(self, name):
-        cprint(f'neuralDose Plan uses following parameters:{self.hparam.optimized_segments_MUs_file_path}; {self.hparam.deposition_pickle_file_path}', 'yellow')
+        cprint(f'neuralDose Plan uses following ptimized_segments_MUs:{self.hparam.optimized_segments_MUs_file_path}; {self.hparam.deposition_pickle_file_path}', 'yellow')
 
-        # compute neural dose
-        neural_dose, pb_dose = 0, 0
+        # cal neural dose
+        neural_dose = 0
         for beam_id, segs_mus in self.segs_mus.items(): # for each beam
             mask = self.data.dict_rayBoolMat_skin[beam_id]   # (h, w), hxw==#bixels
             segs, mus = segs_mus['Seg'], segs_mus['MU'] # (#bixels, #apertures), (#apertures)
@@ -182,16 +209,36 @@ class Evaluation():
             segs = torch.tensor(segs, dtype=torch.float32, device=self.hparam.device)
             mus  = torch.tensor(mus,  dtype=torch.float32, device=self.hparam.device)
             mask = torch.tensor(mask, dtype=torch.bool,    device=self.hparam.device)
-            _neural_dose, _pb_dose = self.neuralDose.get_neuralDose_for_a_beam(beam_id, mus, segs, mask)
-            neural_dose += _neural_dose
-            pb_dose     += _pb_dose
+            neural_dose += self.neuralDose.get_neuralDose_for_a_beam(beam_id, mus, segs, mask)
             assert tuple(neural_dose.shape) == self.hparam.net_output_shape
-            assert tuple(pb_dose.shape)     == self.hparam.net_output_shape
 
         # get individual organ doses
         dict_organ_doses   = parse_MonteCarlo_dose(neural_dose, self.data)
 
-        return OrderedBunch({'name': name, 'organ_dose':dict_organ_doses, 'skin_dose': neural_dose, 'skin_pencilBeamDose':pb_dose})
+        return OrderedBunch({'name': name, 'organ_dose':dict_organ_doses, 'skin_dose': neural_dose})
+
+    def load_penceilBeamDose_OrganDose(self, name):
+        cprint(f'pencilBeam Plan uses following ptimized_segments_MUs:{self.hparam.optimized_segments_MUs_file_path}; {self.hparam.deposition_pickle_file_path}', 'yellow')
+
+        # compute neural dose
+        pb_dose = 0
+        for beam_id, segs_mus in self.segs_mus.items(): # for each beam
+            mask = self.data.dict_rayBoolMat_skin[beam_id]   # (h, w), hxw==#bixels
+            segs, MUs = segs_mus['Seg'], segs_mus['MU'] # (#bixels, #apertures), (#apertures)
+            MUs  = MUs / self.hparam.dose_scale  # x1000
+            segs = torch.tensor(segs, dtype=torch.float32, device=self.hparam.device)
+            MUs  = torch.tensor(MUs,  dtype=torch.float32, device=self.hparam.device)
+            mask = torch.tensor(mask, dtype=torch.bool,    device=self.hparam.device)
+            for i in range(segs.shape[-1]): # for each aperture
+                seg = segs[:,i][mask.flatten()]
+                unitDose = self.PB.get_unit_pencilBeamDose(beam_id, seg)  # 3D dose 61x128x128
+                pb_dose += unitDose * MUs[i]  # x MU
+            assert tuple(pb_dose.shape) == self.hparam.net_output_shape
+
+        # get individual organ doses
+        dict_organ_doses  = parse_MonteCarlo_dose(pb_dose, self.data)
+
+        return OrderedBunch({'name': name, 'organ_dose':dict_organ_doses, 'skin_dose': pb_dose})
 
     def load_originalMC_OrganDose(self, name):
         fns = glob.glob(f'{self.hparam.DICOM_dir}/RTDOSE*原计划.dcm')
@@ -273,39 +320,6 @@ class Evaluation():
         
         return OrderedBunch({'fluence':to_np(fluence), 'organ_dose':dict_organ_doses, 'fluenceMaps': dict_FMs, 'name': name})
 
-    def bak_gamma_plot(self, is_plot=True):
-        D,H,W = self.hparam.net_output_shape
-        gamma = Gamma(gDPM_config_path=f'/mnt/win_share/{self.hparam.patient_ID}/templates/gDPM_config.json', shape=(H,W,D))
-        gammas = OrderedBunch({'pencilBeam':[], 'pred':[]}) 
-        for beam_id, segs_mus in self.mc.segs_mus.items(): # for each beam
-            mask = self.data.dict_bixelShape[beam_id]
-            Segs = segs_mus['Seg'] # (hxw, nb_apertures)
-            for aper_id in range(self.hparam.nb_apertures): # for each aperture 
-                seg = torch.tensor(Segs[:,aper_id], dtype=torch.float32, device=self.hparam.device)
-                neural_dose, pb_dose = self.neuralDose.get_unit_neuralDose_for_a_beam(beam_id, seg, mask)  # NOTE: unit dose
-                neural_dose, pb_dose = to_np(neural_dose), to_np(pb_dose)
-                assert neural_dose.shape == self.hparam.net_output_shape
-                assert pb_dose.shape     == self.hparam.net_output_shape
-
-                mc_dose = self.mc.get_unit_MCdose_from_winServer(beam_id, aper_id)
-                assert mc_dose.shape == self.hparam.net_output_shape
-
-                neuralDoseGamma, pencilBeamGamma, pred_pass, pencilBeam_pass = gamma.get_gamma(dose_ref=mc_dose, dose_pred=neural_dose, dose_pencilBeam=pb_dose)
-                if is_plot:
-                    fig_save_path = self.save_path.joinpath(f'beam={beam_id};aper={aper_id}')
-                    make_dir(fig_save_path)
-                    gamma_plot(CTs=self.neuralDose.CTs, mcDose=mc_dose, pbDose=pb_dose, pred=neural_dose, pencilBeamGamma=pencilBeamGamma, predGamma=neuralDoseGamma, save_path=fig_save_path)
-                gammas.pencilBeam.append(pencilBeam_pass)
-                gammas.pred.append(pred_pass)
-        pdb.set_trace()
-        gammas.pred = np.asarray(gammas.pred)
-        gammas.pencilBeam = np.asarray(gammas.pencilBeam)
-        cprint(f'pencilBeam: mean={gammas.pencilBeam.mean()}; std={gammas.pencilBeam.std()}', 'yellow')
-        cprint(f'pred: mean={gammas.pred.mean()}; std={gammas.pred.std()}', 'yellow' )
-        np.savez(save_path.joinpath('pred_pencilBeam_passrate_dict.npz') , **gammas)
-        pdb.set_trace()
-        cprint('gamma_plot done.', 'green')
-
     def comparison_plots(self, plans):
         '''
         plans: list of plan
@@ -361,14 +375,15 @@ class Evaluation():
 
     def run(self):
         plans_to_compare = []
+        if self.hparam.PBPlan:
+            plans_to_compare.append(self.load_penceilBeamDose_OrganDose('PB'))
+            plans_to_compare.append(self.load_MonteCarlo_OrganDose(self.optimized_MUs, 'PBMC'))
         if self.hparam.NeuralDosePlan:
             plans_to_compare.append(self.load_NeuralDose_OrganDose('NeuralDose'))
-        if self.hparam.neuralDoseMCPlan:
-            plans_to_compare.append(self.load_MonteCarlo_OrganDose(self.optimized_MUs, 'NeuralDoseMonteCarloDose'))
-        if self.hparam.originalMCPlan:
-            plans_to_compare.append(self.load_originalMC_OrganDose('pencilBeamMonteCarloDose'))
-        if self.hparam.originalPBPlan:
-            plans_to_compare.append(self.load_originalPB_OrganDose('pencilBeamDose'))
+            plans_to_compare.append(self.load_MonteCarlo_OrganDose(self.optimized_MUs, 'NeuralDoseMC'))
+        if self.hparam.originalPlan:
+            plans_to_compare.append(self.load_originalMC_OrganDose('originalMC'))
+            plans_to_compare.append(self.load_originalPB_OrganDose('originalPB'))
 
         if self.hparam.CGDeposPlan:
             plans_to_compare.append(self.load_Depos_OrganDose('CG_depos', scale=self.hparam.CGDeposPlan_doseScale))

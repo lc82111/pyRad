@@ -30,119 +30,14 @@ from neuralDose.net.Unet3D import UNet3D
 from neuralDose.data.datamodule import Transform 
 
 
-class PencilBeam():
-    def __init__(self, hparam, data, roi_skinName='ITV_skin'):
-        self.times = []
-        self.hparam = hparam
-        self.roi_skinName = roi_skinName 
-        cprint(f'using skin name {roi_skinName} to parsing PointsPosition.txt; pls confirm the skin name is right', 'red')
-        self.data = data
-        self.geometry = Geometry(data)
-        self.dict_randomApertures = None
-
-        # set dose grid coords
-        self._set_points_positions()
-
-        # set corner of maximum skine rect
-        self._set_skin_coords()
-
-        # {beam_id: deposition matrix (#doseGrid, #beamBixels)}
-        self.dict_deps = convert_depoMatrix_to_tensor(self.data.dict_beamID_Deps, hparam.device)
-        
-    def _load_randApert(self):
-        if self.dict_randomApertures == None:
-            # load saved random apertures
-            save_path = Path(self.hparam.patient_ID).joinpath('dataset/dict_randomApertures.pickle')
-            if os.path.isfile(save_path):
-                self.dict_randomApertures = unpickle_object(save_path)
-            else:
-                raise ValueError
-
-    def _set_skin_coords(self): 
-        '''get corner of maximum skin rectangle  '''
-        dose_grid = self.dose_grid[:, 0:2]
-        dose_grid = dose_grid.round().astype(np.uint)
-
-        self.skin_lefttop = OrderedBunch({'x':dose_grid[:,0].min(), 'y':dose_grid[:,1].min()})
-        self.skin_rightbot= OrderedBunch({'x':dose_grid[:,0].max(), 'y':dose_grid[:,1].max()})
-
-    def _set_points_positions(self):
-        '''get dose_grid coords, from pointsPosition.txt
-        return: coords (#points, 3=[x,y,z])
-        '''
-        with open(self.hparam.pointsPosition_file, "r") as f:
-            lines = f.readlines()
-        
-        # get begin and end lines in pointsPosition.txt for roi_skin
-        begin, end = np.inf, np.inf
-        for i, line in enumerate(lines):
-            if self.roi_skinName in line or self.roi_skinName.replace('skin', 'SKIN') in line: 
-                begin = i+1
-            if i>=begin and ':' in line: # another organ 
-                end = i
-            if i>=begin and i+1==len(lines):
-                end = i+1
-        
-        # parse each line for x,y,z coords
-        coords = []
-        lines = lines[begin:end]
-        for line in lines:
-            coord = [float(x) for x in line.split()]  # split uses dafault delimiter: space and \n 
-            coords.append(coord)
-        coords = np.asarray(coords)
-        if len(coords) != self.data.get_pointNum_from_organName(self.roi_skinName):
-            cprint('[Error] {len(coords)} != {self.data.get_pointNum_from_organName(self.roi_skinName)}')
-
-        # sort pointPositions to ensure the consistent ordering with deposition.txt: z decending, y decending, x ascending  
-        sort_index = np.lexsort((coords[:,0], -coords[:,1], -coords[:,2]))  # NOTE TODO: the PTVs have duplicate begin and end slices
-        coords = coords[sort_index]
-        
-        # change zs from physic coords (e.g. 3.6) to image coords (e.g. 0)
-        zs = np.array([float(z)/10 for z in self.data.Dicom_Reader.slice_info])  # z axis coords in the physic coords 
-        for i, z in enumerate(zs): # for each slice
-            indexes = np.where(coords[:,-1]==z)[0]
-            coords[indexes, -1] = i
-
-        # for later use
-        self.dose_grid = coords
-        self.doseGrid_zz_yy_xx = (coords[:,2], coords[:,1], coords[:,0])
-
-    def _parse_dose_torch(self, vector_dose):
-        ''' turn 1D dose to 3D and interp the 3D dose
-        return: 3D dose (1, 1, D//2, H=256, W=256) '''
-        D, H, W = self.hparam.MCDose_shape 
-        doseGrid_shape = self.geometry.doseGrid.size.astype(np.int).tolist()[::-1]
-        dose = torch.zeros(doseGrid_shape, dtype=torch.float32, device=self.hparam.device)  # 3D dose @ doseGrid size
-        dose[self.doseGrid_zz_yy_xx] = vector_dose  # index vector_dose to 3D dose
-        dose = torch.nn.functional.interpolate(dose.view([1,1]+doseGrid_shape), size=(D//2,H,W), mode='trilinear', align_corners=False)  # interpolate only support 5D input
-        #  dose = torch.nn.functional.interpolate(dose.view(1,1,D,H*2,W*2), size=(D//2,H,W), mode='nearest')
-        dose = dose.squeeze()
-        return dose
-
-    def get_unit_pencilBeamDose(self, beam_id, segment):
-        ''' 
-        Arguments: 
-            beam_id: int
-            segment: ndarray (#validBixels==hxw, )
-        Return:
-            pbDose: tensor (D=61, H=128, W=128) 
-        '''
-        t1 = time.time()
-        pbDose = cal_dose(self.dict_deps[beam_id], segment) # cal unit dose (#dose_grid, )
-        t2 = time.time()
-        self.times.append(t2-t1)
-        pbDose = pbDose[0:self.data.get_pointNum_from_organName('ITV_skin')]  # only consider the skin dose
-        pbDose = self._parse_dose_torch(pbDose)  # 3D dose tensor 61x256x256
-        pbDose = transforms.CenterCrop(128)(pbDose)  # 61x128x128
-        return pbDose
-
 class NeuralDose():
-    def __init__(self, hparam, data):
+    def __init__(self, hparam, data, PB):
         self.times  = []
         self.hparam = hparam
         self.data   = data
+        self.PB     = PB
         self.net    = self.load_net()
-        self.PB     = PencilBeam(hparam, data)
+        self.is_first = True
 
         data_dir = Path(hparam.data_dir)
         CTs = np.load(data_dir.joinpath('CTs.npz'))['CTs']  # 3d ndarray (D,H,W) or 4d ndarray (#beam,D,H,W)
@@ -156,10 +51,12 @@ class NeuralDose():
         self.pbmcDoses_opened = torch.tensor(self.pbmcDoses_opened, dtype=torch.float32, device=hparam.device)
 
         self.transform = Transform(hparam)
+        
+        self.cachedUnitNeuralDose = {}
+        for i in range(1, data.num_beams+1):
+            self.cachedUnitNeuralDose[i] = []
 
-        self.unitNeuralDoses = {}
-
-    def get_neuralDose_for_a_beam(self, beam_id, MUs, segs, mask, requires_pencilBeamDose=True, is_first=True):
+    def get_neuralDose_for_a_beam(self, beam_id, MUs, segs, mask):
         '''Arguments:
                 MUs:  tensor (#apertures,)
                 segs: tensor (#bixels, #apertures), all rays including valid and non-valid rays
@@ -168,56 +65,30 @@ class NeuralDose():
                 neuralDose: tensor (D/2=61,H=centerCrop128,W=centerCrop128), non-unit neural dose 
                 pbDose:     tensor (D/2=61,H=centerCrop128,W=centerCrop128), non-unit pencil beam dose
         '''
-        beam_id = int(to_np(beam_id))
-        requires_pencilBeamDose = bool(to_np(requires_pencilBeamDose))
-        neuralDose, pbDose = 0, 0
+        if isinstance(beam_id, torch.Tensor):
+            beam_id = int(to_np(beam_id))
 
-        if is_first:
-            self.unitNeuralDoses[beam_id] = {}
-        for i in range(segs.shape[-1]): # for each aperture
-            if is_first:
-                seg = segs[:,i][mask.flatten()]
-                unitNeuralDose, unitPBDose = self.get_neuralDose_for_an_aperture(seg, beam_id) # 3D unit dose (D,H,W)
-                self.unitNeuralDoses[beam_id][i] = unitNeuralDose.detach()
-            else:
-                unitNeuralDose = self.unitNeuralDoses[beam_id][i]
+        neuralDose = 0 
+        if self.is_first and self.hparam.not_use_apertureRefine:
+            self.cachedUnitNeuralDose[beam_id] = {}
 
-            neuralDose += unitNeuralDose * MUs[i]  # x MU
-            if requires_pencilBeamDose:
-                pbDose += unitPBDose * MUs[i].detach()  # x MU
-        if requires_pencilBeamDose:
-            return neuralDose, pbDose 
-        else:
-            return neuralDose
-   
-    def get_neuralDose_for_a_beam_bak(self, beam_id, MUs, segs, mask, requires_pencilBeamDose=True):
-        '''Arguments:
-                MUs:  tensor (#apertures,)
-                segs: tensor (#bixels, #apertures), all rays including valid and non-valid rays
-                mask: tensor (h,w), hxw==#bixels, bool, 1 indicates valid ray 
-           Returns:
-                neuralDose: tensor (D/2=61,H=centerCrop128,W=centerCrop128), non-unit neural dose 
-                pbDose:     tensor (D/2=61,H=centerCrop128,W=centerCrop128), non-unit pencil beam dose
-        '''
-        beam_id = int(to_np(beam_id))
-        requires_pencilBeamDose = bool(to_np(requires_pencilBeamDose))
-        assert isinstance(MUs,  torch.Tensor)
-        assert isinstance(segs, torch.Tensor)
-        assert isinstance(mask, torch.Tensor)
-        neuralDose, pbDose = 0, 0
-        for i in range(segs.shape[-1]): # for each aperture
+        def _get_unitDose():
             seg = segs[:,i][mask.flatten()]
-            unitNeuralDose, unitPBDose = self.get_neuralDose_for_an_aperture(seg, beam_id) # 3D unit dose (D,H,W)
-            #  neuralDose += unitNeuralDose * MUs[i].to('cpu')  # x MU
-            neuralDose += unitNeuralDose * MUs[i]  # x MU
-            if requires_pencilBeamDose:
-                #pbDose += unitPBDose * MUs[i].detach().to('cpu')  # x MU
-                pbDose += unitPBDose * MUs[i].detach()  # x MU
-        if requires_pencilBeamDose:
-            return neuralDose, pbDose 
-        else:
-            return neuralDose
+            return self.get_neuralDose_for_an_aperture(seg, beam_id) # 3D unit dose (D,H,W)
 
+        for i in range(segs.shape[-1]): # for each aperture
+            if self.is_first and self.hparam.not_use_apertureRefine:
+                unitDose    = _get_unitDose()  # 3D dose 61x128x128
+                neuralDose += unitDose * MUs[i]  # x MU
+                self.cachedUnitNeuralDose[beam_id][i] = unitDose.detach()
+            elif not self.is_first and self.hparam.not_use_apertureRefine:
+                neualDose += self.cachedUnitNeuralDose[beam_id][i] * MUs[i]
+            else:  # first and AR, not first and AR
+                unitDose   = _get_unitDose()  # 3D dose 61x128x128
+                neuralDose+= unitDose * MUs[i]  # x MU
+
+        return neuralDose
+   
     def get_unit_neuralDose_for_a_beam(self, beam_id, seg, mask):
         '''Arguments:
                 seg : tensor (#bixels, ), all rays including valid and non-valid rays
@@ -228,8 +99,8 @@ class NeuralDose():
         assert isinstance(seg,  torch.Tensor)
         assert isinstance(mask, torch.Tensor)
         seg = seg[mask.flatten()]
-        unitNeuralDose, unitPBDose = self.get_neuralDose_for_an_aperture(seg, beam_id) # 3D unit dose (D,H,W)
-        return unitNeuralDose, unitPBDose
+        unitNeuralDose = self.get_neuralDose_for_an_aperture(seg, beam_id) # 3D unit dose (D,H,W)
+        return unitNeuralDose 
 
     def get_neuralDose_for_an_aperture(self, segment, beam_id):
         ''' Arguments:
@@ -250,14 +121,10 @@ class NeuralDose():
 
         # forward throught net  # with torch.no_grad():
         with torch.cuda.amp.autocast():
-            # unitNeuralDose = self.net(inputs.to('cpu'))
-            t1 = time.time()
             unitNeuralDose = self.net(inputs)
-            t2 = time.time()
-            self.times.append(t2-t1)
         unitNeuralDose = torch.relu(unitNeuralDose.squeeze())
         unitNeuralDose = self.transform.strip_padding_depths(unitNeuralDose) # 1,61,128,128
-        return unitNeuralDose, unitPBDose.detach() 
+        return unitNeuralDose
 
     def load_net(self):
         net = UNet3D(in_channels=3, n_classes=1, norm_type=self.hparam.norm_type)

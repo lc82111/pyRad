@@ -13,18 +13,25 @@ set -ex
   #--ckpt_path './pyRad/neuralDose/lightning_logs/version_4/epoch=347-val_loss=0.00003148.ckpt_interval.ckpt' \
 
   #--NeuralDosePlan \
-  #--originalPlan \
-  #--PBPlan \
+  #--neuralDoseMCPlan \
+  #--originalMCPlan \
+  #--originalPBPlan \
+  #--gamma_plot_original \
+  # --gamma_plot_neuralDose \
+  # --NeuralDosePlan \
+  # --neuralDoseMCPlan \
 
 python ./pyRad/evaluation.py \
-  --NeuralDosePlan \
+  --PBDosePlan \
+  --PBDoseMCPlan \
+  --gamma_plot_PB \
   --patient_ID Lung_LvJiCheng_Pa38Plan30Rx31GPU_neuralDose \
   --net Unet3D \
   --data_dir /mnt/ssd/tps_optimization/patients_data/Lung_LvJiCheng_Pa38Plan30Rx31GPU_skin/pbmcDoses_npz_Interp \
   --ckpt_path './pyRad/neuralDose/lightning_logs/version_2/epoch=347-val_loss=0.00003148.ckpt_interval.ckpt' \
   --norm_type 'GroupNorm' \
   --num_depth 64 \
-  --exp_name 20210130 \
+  --exp_name 20210219 \
   --MCDose_shape 122,256,256 \
   --net_output_shape 61,128,128 \
   --nb_apertures 5 \

@@ -62,14 +62,9 @@ class BaseOptions():
         parser.add_argument('--net_output_shape', default='', type=str, help='net output shape')
     
         # evaluation parameters
-        parser.add_argument('--gamma_plot_neuralDose', action="store_true")
-        parser.add_argument('--gamma_plot_original', action="store_true")
-
         parser.add_argument('--NeuralDosePlan', action="store_true")
-        parser.add_argument('--neuralDoseMCPlan', action="store_true")
-        parser.add_argument('--originalPBPlan', action="store_true")
-        parser.add_argument('--originalMCPlan', action="store_true")
-
+        parser.add_argument('--PBPlan', action="store_true")
+        parser.add_argument('--originalPlan', action="store_true")
         parser.add_argument('--PTV_name', default='', type=str, help='ptv name')
 
         parser.add_argument('--MCPlan', action="store_true")
