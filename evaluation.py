@@ -49,10 +49,14 @@ class Evaluation():
         # gamma setting
         D,H,W = self.hparam.net_output_shape
         self.gm = Gamma(gDPM_config_path=f'/mnt/win_share/{self.hparam.patient_ID}/templates/gDPM_config.json', shape=(H,W,D))
+        # prescription_dose
+        self.prescription_dose = self.geometry.plan.target_prescription_dose
         # results dir
         time_str = get_now_time()
         self.save_path = Path(self.hparam.evaluation_result_path, time_str)
         make_dir(self.save_path)
+        # ptv mask
+        self.ptv_mask = self.data.organ_masks[self.hparam.PTV_name]
 
         # MC dose
         if hparam.MCPlan or hparam.MCJYPlan or hparam.MCMURefinedPlan or hparam.NeuralDosePlan or hparam.PBPlan or hparam.originalPlan:
@@ -64,18 +68,6 @@ class Evaluation():
             self.PB = PencilBeam(hparam, self.data)
             self.neuralDose = NeuralDose(hparam, self.data, self.PB)
 
-        # pencil beam 
-        if hparam.PBPlan:
-            self.gamma_plot_PB()
-
-        # neural dose 
-        if hparam.NeuralDosePlan:
-            self.gamma_plot_neuralDose()
-        
-        # original dose
-        if hparam.originalPlan:
-            self.gamma_plot_original()
-        
     def _set_optimized_segments_MUs(self):
         ''' Return: 
                 self.segs_mus: optimized segments and MUs {beam_id: {'Seg':Segs ndarray (hxw, nb_apertures), 'MU':MUs ndarray (nb_apertures,)}} 
@@ -147,35 +139,28 @@ class Evaluation():
             make_dir(dpm_result_path )
             return unit_dose
 
-    def gamma_plot_neuralDose(self, is_plot=True):
-        mc_dose = self.load_MonteCarlo_OrganDose(self.optimized_MUs, 'MonteCarloDose')['skin_dose']
-        pb_dose = self.load_penceilBeamDose_OrganDose('PB')['skin_dose']
-        nd_dose = self.load_NeuralDose_OrganDose('neuralDose')['skin_dose']
-        prescription_dose = self.geometry.plan.target_prescription_dose
-        mask = self.data.organ_masks[self.hparam.PTV_name]
+    def gamma_plot_neuralDose(self, mc_dose, pb_dose, nd_dose, is_plot=True):
         gammaArr = self._get_gamma(mc_dose, {'pb':pb_dose, 'nd':nd_dose})
         if is_plot:
             fig_save_path = self.save_path.joinpath(f'total_dose_neuralDose')
             make_dir(fig_save_path)
-            gamma_plot(self.neuralDose.CTs, mask, to_np(mc_dose), to_np(pb_dose), to_np(nd_dose), gammaArr['pb'], gammaArr['nd'], fig_save_path, prescription_dose)
+            gamma_plot(self.neuralDose.CTs, self.ptv_mask, to_np(mc_dose), to_np(pb_dose), to_np(nd_dose), gammaArr['pb'], gammaArr['nd'], fig_save_path, self.prescription_dose)
         cprint(f'gamma_plot done. saved to{fig_save_path}', 'green')
 
     def gamma_plot_PB(self, is_plot=True):
         mc_dose = self.load_MonteCarlo_OrganDose(self.optimized_MUs, 'MonteCarloDose')['skin_dose']
         pb_dose = self.load_penceilBeamDose_OrganDose('PB')['skin_dose']
-        prescription_dose = self.geometry.plan.target_prescription_dose
         mask = self.data.organ_masks[self.hparam.PTV_name]
         gammaArr = self._get_gamma(mc_dose, {'pb':pb_dose})
         if is_plot:
             fig_save_path = self.save_path.joinpath(f'total_dose_PB')
             make_dir(fig_save_path) 
-            gamma_plot(self.neuralDose.CTs, mask, to_np(mc_dose), to_np(pb_dose), to_np(pb_dose), gammaArr['pb'], gammaArr['pb'], fig_save_path, prescription_dose)
+            gamma_plot(self.neuralDose.CTs, self.ptv_mask, to_np(mc_dose), to_np(pb_dose), to_np(pb_dose), gammaArr['pb'], gammaArr['pb'], fig_save_path, self.prescription_dose)
         cprint(f'gamma_plot done. saved to{fig_save_path}', 'green')
 
     def gamma_plot_original(self, is_plot=True):
         mc_dose = self.load_originalMC_OrganDose('pbMonteCarloDose')['skin_dose']
         pb_dose = self.load_originalPB_OrganDose('pbDose')['skin_dose']
-        prescription_dose = self.geometry.plan.target_prescription_dose
         mask = self.data.organ_masks[self.hparam.PTV_name]
 
         D,H,W = self.hparam.net_output_shape
@@ -185,7 +170,7 @@ class Evaluation():
         if is_plot:
             fig_save_path = self.save_path.joinpath(f'total_dose_original')
             make_dir(fig_save_path)
-            gamma_plot(self.neuralDose.CTs, mask, to_np(mc_dose), to_np(pb_dose), to_np(pb_dose), pbGamma, pbGamma, fig_save_path, prescription_dose)
+            gamma_plot(self.neuralDose.CTs, self.ptv_mask, to_np(mc_dose), to_np(pb_dose), to_np(pb_dose), pbGamma, pbGamma, fig_save_path, self.prescription_dose)
 
         cprint(f'gamma_plot done. saved to{fig_save_path}', 'green')
 
@@ -321,7 +306,7 @@ class Evaluation():
         
         return OrderedBunch({'fluence':to_np(fluence), 'organ_dose':dict_organ_doses, 'fluenceMaps': dict_FMs, 'name': name})
 
-    def comparison_plots(self, plans):
+    def comparison_plots(self, plans, dvh_name=''):
         '''
         plans: list of plan
         '''
@@ -344,8 +329,7 @@ class Evaluation():
                     plan.organ_dose.pop(name)
                     print(f'DVH: pop unnecessary organ: {name}')
         # plot
-        fig, ax = plt.subplots(figsize=(20, 10))
-        max_dose = 12000
+        fig, ax = plt.subplots(figsize=(5, 5))
         organ_names = list(plans[0].organ_dose.keys())
         colors = cm.jet(np.linspace(0,1,len(organ_names)))
         #  linestyles = ['solid', 'dotted', 'dashed', 'dashdot']
@@ -358,33 +342,47 @@ class Evaluation():
                     n, bins, patches = ax.hist(to_np(plan.organ_dose[organ_name]),
                        bins=12000, 
                        linestyle=linestyles[pi], color=colors[i],
-                       range=(0, max_dose),
+                       range=(0, self.prescription_dose*1.3),
                        density=True, histtype='step',
                        cumulative=-1, 
-                       label=f'{plan.name}_{organ_name}_maxDose{int(to_np(plan.organ_dose[organ_name].max()))}')
+                       #label=f'{plan.name}_{organ_name}_maxDose{int(to_np(plan.organ_dose[organ_name].max()))}')
+                       label=f'{plan.name}_{organ_name}')
 
         ax.grid(True)
-        ax.legend(loc='upper left', bbox_to_anchor=(1.05,1.0))
+        #ax.legend(loc='upper left', bbox_to_anchor=(1.05,1.0))
+        ax.legend(loc='best', fontsize='x-small')
         ax.set_title('Dose volume Histograms')
         ax.set_xlabel('Absolute Dose cGy')
         ax.set_ylabel('Relative Volume %')
         plt.tight_layout()
-        save_path = self.save_path.joinpath('./DVH.pdf')
+        save_path = self.save_path.joinpath(f'./DVH_{dvh_name}.pdf')
         plt.savefig(save_path)
         #plt.show()
-        cprint(f'dvh.pdf has been written to {save_path}', 'green')
+        cprint(f'dvh_{dvh_name}.pdf has been written to {save_path}', 'green')
 
     def run(self):
         plans_to_compare = []
+        # PB dose 
         if self.hparam.PBPlan:
             plans_to_compare.append(self.load_penceilBeamDose_OrganDose('PB'))
             plans_to_compare.append(self.load_MonteCarlo_OrganDose(self.optimized_MUs, 'PBMC'))
+            self.gamma_plot_PB()
+        # neural dose 
         if self.hparam.NeuralDosePlan:
-            plans_to_compare.append(self.load_NeuralDose_OrganDose('NeuralDose'))
-            plans_to_compare.append(self.load_MonteCarlo_OrganDose(self.optimized_MUs, 'NeuralDoseMC'))
+            mc_doses = self.load_MonteCarlo_OrganDose(self.optimized_MUs, 'NeuMC')
+            pb_doses = self.load_penceilBeamDose_OrganDose('PB')
+            nd_doses = self.load_NeuralDose_OrganDose('Neu')
+
+            self.comparison_plots([mc_doses, pb_doses], dvh_name='mc_pb')
+            self.comparison_plots([mc_doses, nd_doses], dvh_name='mc_nd')
+
+            self.gamma_plot_neuralDose(mc_doses['skin_dose'], pb_doses['skin_dose'], mc_doses['skin_dose'])
+            return
+        # original dose
         if self.hparam.originalPlan:
             plans_to_compare.append(self.load_originalMC_OrganDose('originalMC'))
             plans_to_compare.append(self.load_originalPB_OrganDose('originalPB'))
+            self.gamma_plot_original()
 
         if self.hparam.CGDeposPlan:
             plans_to_compare.append(self.load_Depos_OrganDose('CG_depos', scale=self.hparam.CGDeposPlan_doseScale))

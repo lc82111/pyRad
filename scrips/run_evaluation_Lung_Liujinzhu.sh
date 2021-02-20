@@ -20,9 +20,7 @@ set -ex
   #--gamma_plot_neuralDose \
 
 python ./pyRad/evaluation.py \
-  --gamma_plot_neuralDose \
   --NeuralDosePlan \
-  --neuralDoseMCPlan \
   --patient_ID Lung_Liujinzhu_neuralDose \
   --net Unet3D \
   --data_dir /mnt/ssd/tps_optimization/patients_data/Lung_Liujinzhu_skin/pbmcDoses_npz_Interp \
