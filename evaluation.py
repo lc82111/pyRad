@@ -60,15 +60,16 @@ class Evaluation():
             self.mc = MonteCarlo(hparam, self.data)
             self.unitDose = self.get_all_beams_MCdose_for_optimizedSegMUs()  # unitDose, ndarray (nb_beams*nb_apertures=30, D/2=61, H=CenterCrop128, W=CenterCrop128)
         
+        if hparam.PBPlan or hparam.NeuralDosePlan or hparam.originalPlan:
+            self.PB = PencilBeam(hparam, self.data)
+            self.neuralDose = NeuralDose(hparam, self.data, self.PB)
+
         # pencil beam 
         if hparam.PBPlan:
-            self.PB = PencilBeam(hparam, self.data)
             self.gamma_plot_PB()
 
         # neural dose 
         if hparam.NeuralDosePlan:
-            self.PB = PencilBeam(hparam, self.data)
-            self.neuralDose = NeuralDose(hparam, self.data, self.PB)
             self.gamma_plot_neuralDose()
         
         # original dose
@@ -102,7 +103,7 @@ class Evaluation():
         path = Path(self.hparam.evaluation_result_path)
         for name, dose in dict_doses.items():
             gamma_path = path.joinpath(f'{name}_gammaArr.pickle')
-            csv_path   = path.joinpath(f'{name}_gammaCSV.pickle')
+            csv_path   = path.joinpath(f'{name}_gammaCSV.csv')
             if not os.path.isfile(gamma_path):
                 passRate, gammaArr = self.gm.get_a_gamma(dose_ref=to_np(mc_dose), dose_pred=to_np(dose))
                 pickle_object(gamma_path, gammaArr)
@@ -164,11 +165,11 @@ class Evaluation():
         pb_dose = self.load_penceilBeamDose_OrganDose('PB')['skin_dose']
         prescription_dose = self.geometry.plan.target_prescription_dose
         mask = self.data.organ_masks[self.hparam.PTV_name]
-        gammaArr = self.get_gamma(mc_dose, {'pb', pb_dose})
+        gammaArr = self._get_gamma(mc_dose, {'pb':pb_dose})
         if is_plot:
-            fig_save_path = self.save_path.joinpath(f'total_dose_original')
+            fig_save_path = self.save_path.joinpath(f'total_dose_PB')
             make_dir(fig_save_path) 
-            gamma_plot(self.neuralDose.CTs, mask, to_np(mc_dose), to_np(pb_dose), to_np(pb_dose), gammaArr['pb'], gammaArr['Arr'], fig_save_path, prescription_dose)
+            gamma_plot(self.neuralDose.CTs, mask, to_np(mc_dose), to_np(pb_dose), to_np(pb_dose), gammaArr['pb'], gammaArr['pb'], fig_save_path, prescription_dose)
         cprint(f'gamma_plot done. saved to{fig_save_path}', 'green')
 
     def gamma_plot_original(self, is_plot=True):

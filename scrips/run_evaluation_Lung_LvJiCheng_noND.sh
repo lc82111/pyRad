@@ -22,9 +22,7 @@ set -ex
   # --neuralDoseMCPlan \
 
 python ./pyRad/evaluation.py \
-  --PBDosePlan \
-  --PBDoseMCPlan \
-  --gamma_plot_PB \
+  --PBPlan \
   --patient_ID Lung_LvJiCheng_Pa38Plan30Rx31GPU_neuralDose \
   --net Unet3D \
   --data_dir /mnt/ssd/tps_optimization/patients_data/Lung_LvJiCheng_Pa38Plan30Rx31GPU_skin/pbmcDoses_npz_Interp \
