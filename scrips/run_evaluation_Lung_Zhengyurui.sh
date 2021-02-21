@@ -19,19 +19,20 @@ set -ex
   #--gamma_plot_original \
   #--gamma_plot_neuralDose \
 
+  #--exp_name 202100202 \
+
 python ./pyRad/evaluation.py \
-  --NeuralDosePlan \
-  --neuralDoseMCPlan \
-  --gamma_plot_neuralDose \
+  --PBPlan \
   --patient_ID Lung_Zhengyurui_neuralDose \
   --net Unet3D \
   --data_dir /mnt/ssd/tps_optimization/patients_data/Lung_Zhengyurui_skin/pbmcDoses_npz_Interp \
   --ckpt_path './pyRad/neuralDose/lightning_logs/version_6/epoch=249-val_loss=0.00003452.ckpt_interval.ckpt' \
   --norm_type 'GroupNorm' \
   --num_depth 64 \
-  --exp_name 202100202 \
+  --exp_name 20210218_noARND \
   --MCDose_shape 86,256,256 \
   --net_output_shape 43,128,128 \
   --nb_apertures 6 \
   --consider_organs 'PTV_plan' 'Esophagus' 'peripheral_tissue' 'Spinal canal' 'Lung_R' 'Lung_L' \
   --device cpu \
+  --PTV_name 'PTV_plan' \
