@@ -65,8 +65,8 @@ def check_beam(dict_segments, dict_lrs, data):
                 check_row(row, l, r, beam_id, i, j)
 
 def save_times(hparam, elapse_time):
-    df = pd.DataFrame({'elapse_time':[elapse_time,]})
-    df.to_csv(f'../patients_data/{hparam.patient_ID}/results/{hparam.exp_name}/times.csv')
+    df = pd.DataFrame({'device':[hparam.device,], 'elapse_time':[elapse_time,]})
+    df.to_csv(f'./patients_data/{hparam.patient_ID}/results/{hparam.exp_name}/times.csv')
 
 def save_result(mp): 
     def _modulate_segment_with_partialExposure(seg, lrs, pes):

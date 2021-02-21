@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import argparse, os, pdb, glob
+import argparse, os, pdb, glob, json
 from termcolor import colored, cprint
 from argparse import ArgumentParser, Namespace
 from pathlib import Path
@@ -104,6 +104,13 @@ class BaseOptions():
             opt_file.write(message)
             opt_file.write('\n')
 
+    def save_options(self, hparam):
+        if not os.path.isdir(hparam.optimized_segments_MUs_file_path):
+            os.makedirs(hparam.optimized_segments_MUs_file_path)
+        if hparam.PTV_name == '':
+            with open(f'{hparam.optimized_segments_MUs_file_path}/hparam.json', 'w') as f:
+                json.dump(hparam, f, indent=4)
+
     def parse(self):
         """Parse our options."""
         # parameters depending above 
@@ -166,6 +173,6 @@ class BaseOptions():
             hparam.net_output_shape = [int(x) for x in hparam.net_output_shape.split(',')]
             hparam.net_output_shape = tuple(hparam.net_output_shape)
 
-        # print all params
         #  self.print_options(hparam)
+        self.save_options(hparam)
         return hparam
