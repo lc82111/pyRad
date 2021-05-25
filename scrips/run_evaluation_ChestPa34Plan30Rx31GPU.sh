@@ -13,7 +13,6 @@ set -ex
 
 python ./pyRad/evaluation.py \
   --NeuralDosePlan \
-  --MCPlan \
   --patient_ID Chest_neuralDose_Pa34Plan30Rx31GPU \
   --net Unet3D \
   --data_dir /mnt/ssd/tps_optimization/patients_data/Chest_skin_Pa34Plan30Rx31GPU/pbmcDoses_npz_Interp/ \
@@ -26,3 +25,4 @@ python ./pyRad/evaluation.py \
   --nb_apertures 5 \
   --consider_organs PTV Cord Stomach-PTV R0.5 \
   --device cpu \
+  --PTV_name PTV \

@@ -25,6 +25,39 @@ import pickle
 
 from utils import *
 
+
+def CI(ptv_dose, skin_dose, prescription_dose):
+    '''
+    prescription_dose:   scalar
+    ptv_dose:  dose of PTV,  vector with shape of (organ_point_num, )
+    skin_dose: dose of body, vector with shape of (all_point_num,   )
+    Note: gradient can not be backwarded through ptv_dose and skin_dose
+    '''
+    ptv_dose, skin_dose = to_np(ptv_dose), to_np(skin_dose)
+    organ_vol_ratio = (ptv_dose > prescription_dose).sum() / ptv_dose.size
+    body_vol_ratio  = (ptv_dose > prescription_dose).sum() / (skin_dose > prescription_dose).sum()
+    ci = organ_vol_ratio*body_vol_ratio
+    return ci
+
+def V_constraint_OAR(dose, threshold_dose):
+    '''
+    dose: dose of OAR
+    Return: relative volume > threshold_dose
+    Note: gradient can not be backwarded '''
+    dose = to_np(dose)
+    dose.sort()
+    limitv = np.interp(threshold_dose, dose, range(len(dose)))
+    volume = (len(dose) - limitv)*100. / len(dose)
+    return volume
+
+def HI(dose):
+    '''(D2-D98)/D50'''
+    d98 = torch.quantile(dose, 1-0.98)
+    d2  = torch.quantile(dose, 1-0.02)
+    d50 = torch.quantile(dose, 1-0.5)
+    hi = (d2-d98)/d50
+    return hi
+
 class Loss():
     def __init__(self, hparam, allOrganTable, is_warning=True):
         self.hparam         = hparam

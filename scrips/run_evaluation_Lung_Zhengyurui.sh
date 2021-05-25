@@ -12,24 +12,18 @@ set -ex
 
   #--ckpt_path './pyRad/neuralDose/lightning_logs/version_4/epoch=347-val_loss=0.00003148.ckpt_interval.ckpt' \
 
-  #--NeuralDosePlan \
-  #--neuralDoseMCPlan \
-  #--originalMCPlan \
-  #--originalPBPlan \
-  #--gamma_plot_original \
-  #--gamma_plot_neuralDose \
-
-  #--exp_name 202100202 \
+  #--PBPlan
+  #--exp_name 20210218_noARND \
 
 python ./pyRad/evaluation.py \
-  --PBPlan \
+  --NeuralDosePlan \
+  --exp_name 202100202 \
   --patient_ID Lung_Zhengyurui_neuralDose \
   --net Unet3D \
   --data_dir /mnt/ssd/tps_optimization/patients_data/Lung_Zhengyurui_skin/pbmcDoses_npz_Interp \
   --ckpt_path './pyRad/neuralDose/lightning_logs/version_6/epoch=249-val_loss=0.00003452.ckpt_interval.ckpt' \
   --norm_type 'GroupNorm' \
   --num_depth 64 \
-  --exp_name 20210218_noARND \
   --MCDose_shape 86,256,256 \
   --net_output_shape 43,128,128 \
   --nb_apertures 6 \

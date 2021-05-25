@@ -28,7 +28,7 @@ from matplotlib import rc
 
 from utils import *
 from data import Data, Geometry
-from loss import Loss
+from loss import Loss, HI, CI, V_constraint_OAR
 from options import BaseOptions
 from monteCarlo import MonteCarlo
 from neural_dose import NeuralDose
@@ -147,10 +147,7 @@ class Evaluation():
             gamma_plot(self.neuralDose.CTs, self.ptv_mask, to_np(mc_dose), to_np(pb_dose), to_np(nd_dose), gammaArr['pb'], gammaArr['nd'], fig_save_path, self.prescription_dose)
         cprint(f'gamma_plot done. saved to{fig_save_path}', 'green')
 
-    def gamma_plot_PB(self, is_plot=True):
-        mc_dose = self.load_MonteCarlo_OrganDose(self.optimized_MUs, 'MonteCarloDose')['skin_dose']
-        pb_dose = self.load_penceilBeamDose_OrganDose('PB')['skin_dose']
-        mask = self.data.organ_masks[self.hparam.PTV_name]
+    def gamma_plot_PB(self, mc_dose, pb_dose, is_plot=True):
         gammaArr = self._get_gamma(mc_dose, {'pb':pb_dose})
         if is_plot:
             fig_save_path = self.save_path.joinpath(f'total_dose_PB')
@@ -158,19 +155,12 @@ class Evaluation():
             gamma_plot(self.neuralDose.CTs, self.ptv_mask, to_np(mc_dose), to_np(pb_dose), to_np(pb_dose), gammaArr['pb'], gammaArr['pb'], fig_save_path, self.prescription_dose)
         cprint(f'gamma_plot done. saved to{fig_save_path}', 'green')
 
-    def gamma_plot_original(self, is_plot=True):
-        mc_dose = self.load_originalMC_OrganDose('pbMonteCarloDose')['skin_dose']
-        pb_dose = self.load_originalPB_OrganDose('pbDose')['skin_dose']
-        mask = self.data.organ_masks[self.hparam.PTV_name]
-
-        D,H,W = self.hparam.net_output_shape
-        gamma = Gamma(gDPM_config_path=f'/mnt/win_share/{self.hparam.patient_ID}/templates/gDPM_config.json', shape=(H,W,D))
-
-        pb_pass, pbGamma = gamma.get_a_gamma(dose_ref=to_np(mc_dose), dose_pred=to_np(pb_dose))
+    def gamma_plot_original(self, mc_dose, pb_dose, is_plot=True):
+        gammaArr = self._get_gamma(mc_dose, {'origpb':pb_dose})
         if is_plot:
             fig_save_path = self.save_path.joinpath(f'total_dose_original')
             make_dir(fig_save_path)
-            gamma_plot(self.neuralDose.CTs, self.ptv_mask, to_np(mc_dose), to_np(pb_dose), to_np(pb_dose), pbGamma, pbGamma, fig_save_path, self.prescription_dose)
+            gamma_plot(self.neuralDose.CTs, self.ptv_mask, to_np(mc_dose), to_np(pb_dose), to_np(pb_dose), gammaArr['origpb'], gammaArr['origpb'], fig_save_path, self.prescription_dose)
 
         cprint(f'gamma_plot done. saved to{fig_save_path}', 'green')
 
@@ -311,6 +301,7 @@ class Evaluation():
         plans: list of plan
         '''
         ## print loss and breaking pts num
+        losses = {}
         for plan in plans: 
             dict_organ_doses = plan.organ_dose.copy()
             for name, dose in dict_organ_doses.copy().items():
@@ -319,7 +310,11 @@ class Evaluation():
             print(f'{plan.name} breaking points #: ', end='')
             for organ_name, breaking_points_num in plan_breaking_points_nums.items():
                 print(f'{organ_name}: {breaking_points_num}   ', end='')
+
             print(f'loss={plan_loss}\n\n') # NOTE: the loss may differ from the training loss because the partialExp effects
+            losses[f'{plan.name}'] = [plan_loss,]
+        df = pd.DataFrame(losses)
+        df.to_csv(f'./patients_data/{hparam.patient_ID}/results/{hparam.exp_name}/losses_{dvh_name}.csv')
 
         ## plot DVH
         # pop unnecessary organ dose to avoid mess dvh
@@ -345,7 +340,6 @@ class Evaluation():
                        range=(0, self.prescription_dose*1.3),
                        density=True, histtype='step',
                        cumulative=-1, 
-                       #label=f'{plan.name}_{organ_name}_maxDose{int(to_np(plan.organ_dose[organ_name].max()))}')
                        label=f'{plan.name}_{organ_name}')
 
         ax.grid(True)
@@ -360,29 +354,58 @@ class Evaluation():
         #plt.show()
         cprint(f'dvh_{dvh_name}.pdf has been written to {save_path}', 'green')
 
+    def metrics(self, dose):
+        df = {} 
+        ptv_name = self.hparam.PTV_name
+        threshold_dose = [5*100, 15*100, 20*100, 30*100, 66*100]  # cGy
+        for name, ds in dose['organ_dose'].items():
+            df[name] = [len(ds), ds.mean(), ds.max(), ds.min()]
+            # v5 v15 v20 v30 v66
+            for td in threshold_dose:
+                df[name].append(V_constraint_OAR(ds, td))
+            # d95
+            df[name].append(torch.quantile(ds, 1-0.95)) # d95
+            # hi
+            df[name].append(HI(ds))
+            # ci
+            if ptv_name in name:
+                df[ptv_name].append(CI(dose['organ_dose'][ptv_name], dose['skin_dose'], self.prescription_dose))
+            else:
+                df[name].append('n/a')
+        df = pd.DataFrame(df, index=['volume', 'mean dose', 'max dose', 'min dose',
+                                     'V5%', 'V15%', 'V20%', 'V30%', 'V66%', 'D95(cGy)',
+                                     'HI', 'CI'])
+        df.to_csv(self.save_path.joinpath('metrics.csv'))
+        print(df)
+        pdb.set_trace()
+        return df
+
     def run(self):
         plans_to_compare = []
         # PB dose 
         if self.hparam.PBPlan:
-            plans_to_compare.append(self.load_penceilBeamDose_OrganDose('PB'))
-            plans_to_compare.append(self.load_MonteCarlo_OrganDose(self.optimized_MUs, 'PBMC'))
-            self.gamma_plot_PB()
+            pb_doses = self.load_penceilBeamDose_OrganDose('PB')
+            mc_doses = self.load_MonteCarlo_OrganDose(self.optimized_MUs, 'MC')
+            self.comparison_plots([mc_doses, pb_doses], dvh_name='mc_pb')
+            self.gamma_plot_PB(mc_doses['skin_dose'], pb_doses['skin_dose'])
+            return
         # neural dose 
         if self.hparam.NeuralDosePlan:
-            mc_doses = self.load_MonteCarlo_OrganDose(self.optimized_MUs, 'NeuMC')
+            mc_doses = self.load_MonteCarlo_OrganDose(self.optimized_MUs, 'MC')
             pb_doses = self.load_penceilBeamDose_OrganDose('PB')
-            nd_doses = self.load_NeuralDose_OrganDose('Neu')
-
+            nd_doses = self.load_NeuralDose_OrganDose('NeuralDose')
+            self.metrics(nd_doses)
             self.comparison_plots([mc_doses, pb_doses], dvh_name='mc_pb')
             self.comparison_plots([mc_doses, nd_doses], dvh_name='mc_nd')
-
             self.gamma_plot_neuralDose(mc_doses['skin_dose'], pb_doses['skin_dose'], mc_doses['skin_dose'])
             return
         # original dose
         if self.hparam.originalPlan:
-            plans_to_compare.append(self.load_originalMC_OrganDose('originalMC'))
-            plans_to_compare.append(self.load_originalPB_OrganDose('originalPB'))
-            self.gamma_plot_original()
+            pb_doses = self.load_originalPB_OrganDose('PB')
+            mc_doses = self.load_originalMC_OrganDose('MC')
+            self.comparison_plots([mc_doses, pb_doses], dvh_name='orig_mc_pb')
+            self.gamma_plot_original(mc_doses['skin_dose'], pb_doses['skin_dose'])
+            return
 
         if self.hparam.CGDeposPlan:
             plans_to_compare.append(self.load_Depos_OrganDose('CG_depos', scale=self.hparam.CGDeposPlan_doseScale))

@@ -18,6 +18,8 @@ set -ex
   #--originalPBPlan \
   #--gamma_plot_original \
   #--gamma_plot_neuralDose \
+  #--NeuralDosePlan \
+  #--PBPlan \
 
 python ./pyRad/evaluation.py \
   --NeuralDosePlan \
@@ -30,7 +32,6 @@ python ./pyRad/evaluation.py \
   --exp_name 20210204 \
   --MCDose_shape 102,256,256 \
   --net_output_shape 51,128,128 \
-  --nb_apertures 5 \
   --consider_organs 'PTV' 'Lung-L' 'RING2' \
   --PTV_name 'PTV' \
   --device cpu \

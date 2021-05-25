@@ -18,11 +18,13 @@ set -ex
   #--originalPBPlan \
   #--gamma_plot_original \
   #--gamma_plot_neuralDose \
-
+  #--NeuralDosePlan \
+  #--originalPlan \
+  #--PBPlan \
+  #--NeuralDosePlan \
+  #--exp_name 20210221_noND \
 python ./pyRad/evaluation.py \
-  --gamma_plot_original \
-  --originalMCPlan \
-  --originalPBPlan \
+  --NeuralDosePlan \
   --patient_ID Lung_QuLi_neuralDose \
   --net Unet3D \
   --data_dir /mnt/ssd/tps_optimization/patients_data/Lung_QuLi_skin/pbmcDoses_npz_Interp \
@@ -32,6 +34,6 @@ python ./pyRad/evaluation.py \
   --exp_name 20210131 \
   --MCDose_shape 102,256,256 \
   --net_output_shape 51,128,128 \
-  --nb_apertures 6 \
-  --consider_organs 'Spinalcord+5mm' 'pGTV'  'Ring 1'  'Esophagu' \
+  --consider_organs 'Esophagus' 'Spinalcord+5mm' 'pGTV'  'Ring 1'  'Esophagu' \
   --device cpu \
+  --PTV_name 'pGTV' \
